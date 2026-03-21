@@ -31,9 +31,16 @@ DairyGPT/
 │       ├── anthropic.js        # Claude (adaptive thinking)
 │       ├── openai.js           # GPT (json_object + streaming)
 │       └── gemini.js           # Gemini (json mime + stream)
+├── db/
+│   ├── connection.js           # pg.Pool singleton (reads DATABASE_URL)
+│   ├── helpers.js              # Generic query wrappers (insert, getOne, getMany, update, upsert, remove)
+│   ├── schema.sql              # DDL — run once to initialise tables
+│   └── models/
+│       ├── entries.js          # Entries model
+│       └── config.js           # App config model (singleton row)
 ├── storage/
-│   ├── entriesStore.js         # JSON file-based entry persistence
-│   └── configStore.js          # Active provider config persistence
+│   ├── entriesStore.js         # JSON file-based entry persistence (legacy)
+│   └── configStore.js          # Active provider config persistence (legacy)
 └── data/                       # Auto-created, gitignored
     ├── entries.json
     └── config.json
@@ -53,15 +60,24 @@ npm install
 cp .env.example .env
 ```
 
-Add the API keys for the providers you want to use:
+Fill in the values:
 ```env
 PORT=3000
+DATABASE_URL=postgresql://user:password@localhost:5432/dairygpt
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
 ```
 
-**3. Start the server**
+**3. Initialise the database**
+
+Create the database, then run the schema file:
+```bash
+createdb dairygpt
+psql $DATABASE_URL -f db/schema.sql
+```
+
+**4. Start the server**
 ```bash
 npm run dev       # development (auto-restarts on file changes)
 npm start         # production
@@ -194,6 +210,31 @@ curl -X POST http://localhost:3000/api/config \
 | `gemini` | `gemini-2.0-flash`, `gemini-1.5-pro`, `gemini-1.5-flash` |
 
 Default: **Anthropic `claude-opus-4-6`**
+
+---
+
+## Database
+
+### Schema
+
+| Table | Columns |
+|-------|---------|
+| `entries` | `id` (TEXT PK), `title`, `body`, `analysis` (JSONB), `created_at`, `updated_at` |
+| `app_config` | `key` (TEXT PK), `provider`, `model`, `api_key`, `updated_at` |
+
+Re-run `db/schema.sql` at any time — all statements use `IF NOT EXISTS` so it is safe to apply repeatedly.
+
+### DB helpers (`db/helpers.js`)
+
+| Function | Description |
+|----------|-------------|
+| `query(sql, params)` | Raw parameterised query |
+| `getOne(table, conditions)` | SELECT … LIMIT 1, returns row or `null` |
+| `getMany(table, conditions, options)` | SELECT with optional `orderBy / limit / offset` |
+| `insert(table, data)` | INSERT … RETURNING \* |
+| `update(table, data, conditions)` | UPDATE … RETURNING \* |
+| `upsert(table, data, conflictCols)` | INSERT … ON CONFLICT DO UPDATE RETURNING \* |
+| `remove(table, conditions)` | DELETE … RETURNING \* |
 
 ---
 
