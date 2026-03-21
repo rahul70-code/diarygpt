@@ -1,3 +1,5 @@
 node_modules/
 .env
 data/entries.json
+project_explaination.md
+rag_plan.md

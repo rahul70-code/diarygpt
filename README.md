@@ -1,8 +1,8 @@
 # DiaryGPT
 
-A privacy-first AI diary companion. Write entries, get emotional analysis, and have reflective conversations powered by RAG — the AI only knows what you've written, nothing else.
+An AI diary companion. Write entries, get emotional analysis, and have reflective conversations powered by real RAG — the AI retrieves the most *relevant* entries to your question, not just the most recent ones.
 
-All entry text is **AES-256 encrypted at rest**. Storage runs locally by default (SQLite); switch to PostgreSQL for multi-device sync.
+Storage runs locally by default (SQLite + sqlite-vec). Switch to PostgreSQL for multi-device sync.
 
 Supports **Anthropic Claude**, **OpenAI GPT**, and **Google Gemini** — switch providers and models at runtime via the config API.
 
@@ -10,12 +10,11 @@ Supports **Anthropic Claude**, **OpenAI GPT**, and **Google Gemini** — switch 
 
 ## Features
 
-- **Encrypted diary entries** — title, body, and AI reflections are AES-256 encrypted at rest
 - **AI analysis** — each entry is auto-analyzed for mood, themes, and a follow-up reflection
-- **RAG-powered chat** — multi-turn conversations grounded in your diary entries; no hallucination, no external knowledge
-- **Semantic search** — find entries by meaning, not just keywords
-- **Hybrid embeddings** — local Ollama (all-MiniLM-L6-v2) by default; OpenAI API optional
-- **Dual storage** — SQLite locally (max privacy) or PostgreSQL for cloud sync; swap via config
+- **RAG-powered chat** — embeds your question, finds the top-5 most semantically relevant diary chunks via cosine similarity, and uses them as exclusive context
+- **Semantic search** — `POST /api/search` finds entries by meaning, not just keywords
+- **Hybrid embeddings** — local Ollama (`all-MiniLM-L6-v2`, 384 dims) by default; OpenAI `text-embedding-3-small` (1536 dims) optional
+- **Dual storage** — SQLite locally (default) or PostgreSQL for cloud sync; swap via `STORAGE_MODE` env var
 - **Multi-provider LLM** — Claude / GPT / Gemini, switch at runtime with no restart
 
 ---
@@ -23,23 +22,22 @@ Supports **Anthropic Claude**, **OpenAI GPT**, and **Google Gemini** — switch 
 ## Architecture
 
 ```
-Client (React SPA)
-    ↕ REST + SSE
+REST + SSE Client
+      ↕
 Express API Gateway
     ├── /api/diary    → CRUD + async analysis & embedding
     ├── /api/chat     → RAG retrieval + LLM streaming
     ├── /api/search   → semantic search across entries
-    └── /api/config   → switch provider / model / storage
+    └── /api/config   → switch provider / model
 
 Service Layer
     ├── LLM service        → Claude / OpenAI / Gemini abstraction
     ├── Embedding service  → Ollama (local) or OpenAI API
-    ├── Encryption service → AES-256-GCM, key from user passphrase
     └── Storage adapter    → unified interface, routes to SQLite or PostgreSQL
 
 Storage Backends
-    ├── SQLite  + sqlite-vec  (local default, max privacy)
-    └── PostgreSQL + pgvector  (cloud, multi-device sync)
+    ├── SQLite  + sqlite-vec  (local default)
+    └── PostgreSQL + pgvector  (cloud / multi-device)
 ```
 
 ---
@@ -53,36 +51,34 @@ DiaryGPT/
 │   ├── diary.js              # CRUD — triggers analysis & embedding async
 │   ├── chat.js               # RAG retrieval + LLM streaming (SSE)
 │   ├── search.js             # Semantic search
-│   └── config.js             # Provider / model / storage config
+│   └── config.js             # Provider / model config
 ├── services/
 │   ├── llm.js                # Provider factory
+│   ├── embedding.js          # Embedding generation (Ollama or OpenAI)
 │   ├── prompts.js            # System prompts + guardrails
 │   └── providers/
 │       ├── anthropic.js      # Claude (adaptive thinking ON)
 │       ├── openai.js         # GPT (streaming + json_object)
 │       └── gemini.js         # Gemini (stream + json mime)
 ├── db/
-│   ├── connection.js         # pg.Pool singleton (PostgreSQL)
 │   ├── adapter.js            # Routes to SQLite or PostgreSQL via STORAGE_MODE
 │   ├── helpers.js            # Re-exports CRUD helpers from active adapter
-│   ├── schema.sql            # PostgreSQL schema (pgvector)
+│   ├── seed.js               # Seeds default user for single-user mode
 │   ├── sqlite-schema.sql     # SQLite schema (sqlite-vec)
+│   ├── schema.sql            # PostgreSQL schema (pgvector)
 │   ├── init.js               # Database initialiser script
 │   ├── adapters/
-│   │   ├── postgres.js       # pg adapter — $N params, pgvector <=> search
-│   │   └── sqlite.js         # SQLite adapter — ? params, vec_distance_cosine
+│   │   ├── sqlite.js         # SQLite adapter — ? params, vec_distance_cosine
+│   │   └── postgres.js       # pg adapter — $N params, pgvector <=> search
 │   └── models/
-│       ├── users.js
 │       ├── entries.js
 │       ├── embeddings.js     # insert + cosine similarity search
 │       ├── analysis.js
 │       ├── chatSessions.js
 │       ├── chatMessages.js
 │       └── config.js
-├── storage/
-│   └── configStore.js        # LLM provider config (JSON file)
-└── data/                     # Auto-created, gitignored
-    └── diary.db              # SQLite database (local mode)
+└── storage/
+    └── configStore.js        # LLM provider config (JSON file)
 ```
 
 ---
@@ -105,31 +101,32 @@ cp .env.example .env
 # Storage — 'local' (SQLite, default) or 'cloud' (PostgreSQL)
 STORAGE_MODE=local
 
-# SQLite path (local mode only — defaults to ./data/diary.db)
-# SQLITE_PATH=./data/diary.db
+# Embedding provider — 'ollama' (default, local) or 'openai'
+EMBEDDING_PROVIDER=ollama
 
 # PostgreSQL (cloud mode only)
-# DATABASE_URL=postgresql://user:password@localhost:5432/dairygpt
+# DATABASE_URL=postgresql://user:password@localhost:5432/diarygpt
 
 # LLM providers — only the ones you use need keys
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
 
-# Embedding (required when embedding_provider = 'openai')
-# OPENAI_API_KEY already covers this
-
 PORT=3000
 ```
 
-### 3. Initialise the database
+### 3. Set up embeddings
 
+**Ollama (local, no API cost — default):**
 ```bash
-npm run db:init
+ollama pull all-MiniLM-L6-v2
 ```
 
-- **Local (SQLite):** schema is applied automatically, `data/diary.db` is created.
-- **Cloud (PostgreSQL):** the command prints the `psql` instruction to run. PostgreSQL needs the `pgvector` extension available.
+**OpenAI (API):**
+```env
+EMBEDDING_PROVIDER=openai
+# OPENAI_API_KEY is already set above
+```
 
 ### 4. Start the server
 
@@ -138,46 +135,27 @@ npm run dev     # development — auto-restarts on file changes
 npm start       # production
 ```
 
-Server runs at `http://localhost:3000`.
+Server runs at `http://localhost:3000`. The SQLite database and default user are created automatically on first start.
 
 ---
 
-## Database Schema
+## How RAG Works
 
-All tables run on both backends. The storage adapter handles dialect differences.
-Fields ending in `_encrypted` are AES-256 encrypted at rest.
+```
+User message: "What patterns do you notice in my stress?"
+      ↓
+generateEmbedding(message)  →  [0.12, -0.34, 0.91, ...]
+      ↓
+vectorSearch(queryVec, k=5, threshold=0.3)
+      ↓
+Top-5 most RELEVANT diary chunks (by cosine similarity)
+      ↓
+Injected as exclusive context into the LLM prompt
+      ↓
+AI responds grounded in your actual entries — no hallucination
+```
 
-| Table | Key columns |
-|---|---|
-| `users` | `id`, `email`, `encryption_key_hash` (Argon2), `storage_mode`, `embedding_provider` |
-| `entries` | `id`, `user_id` (FK), `title_encrypted`, `body_encrypted`, `content_hash` (SHA-256), `written_at` |
-| `embeddings` | `id`, `entry_id` (FK), `embedding` (VECTOR/BLOB), `model_used`, `chunk_text_encrypted`, `chunk_index` |
-| `analysis` | `id`, `entry_id` (FK), `mood`, `themes`, `reflection_encrypted`, `follow_up_question` |
-| `chat_sessions` | `id`, `user_id` (FK), `title` |
-| `chat_messages` | `id`, `session_id` (FK), `role`, `content_encrypted`, `context_entry_ids` (RAG traceability) |
-| `app_config` | `key` (singleton), `provider`, `model`, `api_key` |
-
-**Privacy note:** vectors are stored unencrypted (cosine similarity cannot operate on ciphertext). Vectors alone cannot reconstruct diary text — the chunk text is always encrypted.
-
----
-
-## Storage Adapter
-
-`db/adapter.js` reads `STORAGE_MODE` from the environment and exports a unified API regardless of backend.
-
-| Function | Description |
-|---|---|
-| `query(sql, params)` | Raw parameterised query |
-| `getOne(table, conditions)` | SELECT … LIMIT 1, returns row or `null` |
-| `getMany(table, conditions, options)` | SELECT with optional `orderBy / limit / offset` |
-| `insert(table, data)` | INSERT … RETURNING \* |
-| `update(table, data, conditions)` | UPDATE … RETURNING \* |
-| `upsert(table, data, conflictCols)` | INSERT … ON CONFLICT DO UPDATE RETURNING \* |
-| `remove(table, conditions)` | DELETE … RETURNING \* |
-| `insertEmbedding(data)` | Insert chunk + vector (backend-specific format) |
-| `vectorSearch(userId, vector, opts)` | Cosine similarity search (pgvector or sqlite-vec) |
-
-Backend differences are fully contained in the two adapter files — models and routes never import from them directly.
+On entry creation, the body is embedded in the background (non-blocking). Both Ollama and OpenAI embeddings are stored as Float32 BLOBs in SQLite (or VECTOR columns in PostgreSQL) and searched with cosine similarity.
 
 ---
 
@@ -191,7 +169,7 @@ Backend differences are fully contained in the two adapter files — models and 
 | `GET` | `/api/diary/:id` | Get a single entry |
 | `POST` | `/api/diary` | Create entry — triggers async analysis & embedding |
 | `PATCH` | `/api/diary/:id` | Update entry |
-| `DELETE` | `/api/diary/:id` | Delete entry |
+| `DELETE` | `/api/diary/:id` | Delete entry + its embeddings |
 
 **Create an entry**
 ```bash
@@ -204,7 +182,8 @@ Response includes AI analysis:
 ```json
 {
   "id": "uuid",
-  "titleEncrypted": "...",
+  "title": "Monday",
+  "body": "Rough day at work but the evening walk helped.",
   "analysis": {
     "mood": "mixed",
     "themes": ["work stress", "self-care", "recovery"],
@@ -221,12 +200,12 @@ Response includes AI analysis:
 
 **`POST /api/chat`** — streams a response via Server-Sent Events.
 
-The AI retrieves the top 5 most relevant entry chunks via cosine similarity, decrypts them in memory, and uses them as exclusive context. It will not invent entries or use general knowledge.
+The AI embeds your message, retrieves the top-5 most relevant entry chunks via cosine similarity, decrypts them in memory, and uses them as exclusive context. It will not invent entries or use general knowledge.
 
 ```bash
 curl -X POST http://localhost:3000/api/chat \
   -H "Content-Type: application/json" \
-  -d '{ "sessionId": "uuid", "message": "What patterns do you notice in how I handle stress?" }'
+  -d '{ "message": "What patterns do you notice in how I handle stress?" }'
 ```
 
 **SSE response format:**
@@ -248,6 +227,14 @@ curl -X POST http://localhost:3000/api/search \
   -d '{ "query": "times I felt anxious before a big decision" }'
 ```
 
+Response:
+```json
+[
+  { "id": "uuid", "title": "Sunday", "body": "...", "writtenAt": "...", "score": 0.87 },
+  { "id": "uuid", "title": "Thursday", "body": "...", "writtenAt": "...", "score": 0.74 }
+]
+```
+
 ---
 
 ### Config
@@ -255,22 +242,7 @@ curl -X POST http://localhost:3000/api/search \
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/config` | Get active provider/model + all available options |
-| `POST` | `/api/config` | Switch provider, model, storage mode, or set API key |
-
-**Check current config**
-```bash
-curl http://localhost:3000/api/config
-```
-```json
-{
-  "active": { "provider": "anthropic", "model": "claude-sonnet-4-6", "hasCustomKey": false },
-  "available": {
-    "anthropic": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
-    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-    "gemini": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
-  }
-}
-```
+| `POST` | `/api/config` | Switch provider, model, or set API key |
 
 **Switch to OpenAI**
 ```bash
@@ -285,7 +257,7 @@ curl -X POST http://localhost:3000/api/config \
 
 | Provider | Models | Default |
 |---|---|---|
-| `anthropic` | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` | `claude-sonnet-4-6` |
+| `anthropic` | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` | `claude-opus-4-6` |
 | `openai` | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-3.5-turbo` | — |
 | `gemini` | `gemini-2.0-flash`, `gemini-1.5-pro`, `gemini-1.5-flash` | — |
 
@@ -298,7 +270,7 @@ curl -X POST http://localhost:3000/api/config \
 | Local (Ollama) | `all-MiniLM-L6-v2` | 384 |
 | API (OpenAI) | `text-embedding-3-small` | 1536 |
 
-Default: **Ollama local** — no data leaves the machine. Switching embedding models requires re-embedding all entries.
+Default: **Ollama local** — no data leaves the machine. Switching embedding models requires re-embedding all entries (delete and recreate them, or run a migration script).
 
 ---
 
