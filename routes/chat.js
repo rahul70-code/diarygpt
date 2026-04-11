@@ -3,6 +3,7 @@ import { Embeddings } from "../db/models/embeddings.js";
 import { generateEmbedding } from "../services/embedding.js";
 import { streamChat } from "../services/llm.js";
 import { DEFAULT_USER_ID } from "../db/seed.js";
+import { decrypt } from "../services/encryption.js";
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.post("/", async (req, res) => {
       k: 5,
       threshold: 0.3,
     });
-    context = chunks.map((c) => c.chunk_text_encrypted).join("\n\n");
+    context = chunks.map((c) => decrypt(c.chunk_text_encrypted)).join("\n\n");
   } catch (err) {
     console.warn("[rag] vector search failed, proceeding without context:", err.message);
   }
@@ -35,12 +36,16 @@ router.post("/", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  const fullText = await streamChat(history, message, context, (delta) => {
-    res.write(`data: ${JSON.stringify({ delta })}\n\n`);
-  });
-
-  res.write(`data: ${JSON.stringify({ done: true, text: fullText })}\n\n`);
-  res.end();
+  try {
+    const fullText = await streamChat(history, message, context, (delta) => {
+      res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+    });
+    res.write(`data: ${JSON.stringify({ done: true, text: fullText })}\n\n`);
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
 });
 
 export default router;

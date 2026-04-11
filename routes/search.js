@@ -3,6 +3,7 @@ import { Embeddings } from "../db/models/embeddings.js";
 import { Entries } from "../db/models/entries.js";
 import { generateEmbedding } from "../services/embedding.js";
 import { DEFAULT_USER_ID } from "../db/seed.js";
+import { decrypt } from "../services/encryption.js";
 
 const router = Router();
 
@@ -35,8 +36,8 @@ router.post("/", async (req, res) => {
     if (entry) {
       results.push({
         id: entry.id,
-        title: entry.title_encrypted,
-        body: entry.body_encrypted,
+        title: decrypt(entry.title_encrypted),
+        body: decrypt(entry.body_encrypted),
         writtenAt: entry.written_at,
         score: chunk.score,
       });

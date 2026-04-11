@@ -43,9 +43,9 @@ CREATE INDEX IF NOT EXISTS entries_written_at_idx ON entries (written_at DESC);
 CREATE TABLE IF NOT EXISTS embeddings (
   id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   entry_id             UUID        NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
-  -- 384d for all-MiniLM-L6-v2 (Ollama default). Switching to 1536d (OpenAI) requires
-  -- DROP + ADD COLUMN and full re-embedding.
-  embedding            VECTOR(384) NOT NULL,
+  -- 768d for nomic-embed-text (Ollama default). OpenAI text-embedding-3-small = 1536d.
+  -- Switching models requires DROP + ADD COLUMN and full re-embedding.
+  embedding            VECTOR(768) NOT NULL,
   model_used           TEXT        NOT NULL,           -- e.g. "all-MiniLM-L6-v2" or "text-embedding-3-small"
   chunk_text_encrypted TEXT        NOT NULL,           -- AES-256 encrypted chunk text
   chunk_index          INTEGER     NOT NULL,           -- position within the entry (0-based)
