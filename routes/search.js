@@ -2,7 +2,6 @@ import { Router } from "express";
 import { Embeddings } from "../db/models/embeddings.js";
 import { Entries } from "../db/models/entries.js";
 import { generateEmbedding } from "../services/embedding.js";
-import { DEFAULT_USER_ID } from "../db/seed.js";
 import { decrypt } from "../services/encryption.js";
 
 const router = Router();
@@ -19,7 +18,7 @@ router.post("/", async (req, res) => {
   if (!query) return res.status(400).json({ error: "query is required" });
 
   const queryVec = await generateEmbedding(query);
-  const chunks = await Embeddings.similaritySearch(DEFAULT_USER_ID, queryVec, {
+  const chunks = await Embeddings.similaritySearch(req.user.id, queryVec, {
     k,
     threshold: 0.3,
   });

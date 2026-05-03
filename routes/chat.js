@@ -1,32 +1,116 @@
 import { Router } from "express";
+import { v4 as uuidv4 } from "uuid";
 import { Embeddings } from "../db/models/embeddings.js";
+import { ChatSessions } from "../db/models/chatSessions.js";
+import { ChatMessages } from "../db/models/chatMessages.js";
 import { generateEmbedding } from "../services/embedding.js";
 import { streamChat } from "../services/llm.js";
-import { DEFAULT_USER_ID } from "../db/seed.js";
-import { decrypt } from "../services/encryption.js";
+import { encrypt, decrypt } from "../services/encryption.js";
 
 const router = Router();
 
+// GET /api/chat/sessions — list all sessions for the authenticated user
+router.get("/sessions", async (req, res) => {
+  try {
+    const sessions = await ChatSessions.getAllByUser(req.user.id);
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/chat/sessions/:id/messages — get all messages in a session
+router.get("/sessions/:id/messages", async (req, res) => {
+  try {
+    const session = await ChatSessions.getById(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (session.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+
+    const messages = await ChatMessages.getBySession(req.params.id);
+    res.json(
+      messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: decrypt(m.content_encrypted),
+        createdAt: m.created_at,
+      }))
+    );
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/chat/sessions/:id — delete a session and all its messages
+router.delete("/sessions/:id", async (req, res) => {
+  try {
+    const session = await ChatSessions.getById(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (session.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+
+    await ChatSessions.deleteById(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * POST /api/chat
- * Body: { message: string, history?: [{role, content}] }
+ * Body: { message: string, sessionId?: string }
  *
- * Streams the active provider's response as Server-Sent Events (SSE).
- * Uses vector similarity search to find the top-5 most relevant diary
- * chunks for the user's message (true RAG, not just recency).
+ * Streams the AI response as Server-Sent Events.
+ * Persists user + assistant messages to DB per session.
+ * If no sessionId is provided, a new session is created and its id is returned
+ * in the final `done` event so the client can continue the conversation.
  */
 router.post("/", async (req, res) => {
-  const { message, history = [] } = req.body;
+  const { message, sessionId } = req.body;
   if (!message) return res.status(400).json({ error: "message is required" });
 
-  // Embed the user's message and retrieve semantically relevant chunks
+  let session;
+  try {
+    if (sessionId) {
+      session = await ChatSessions.getById(sessionId);
+      if (!session) return res.status(404).json({ error: "Session not found" });
+      if (session.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+    } else {
+      const title = message.length > 50 ? message.slice(0, 47) + "…" : message;
+      session = await ChatSessions.create({ id: uuidv4(), user_id: req.user.id, title });
+    }
+
+    // Persist user message immediately
+    await ChatMessages.create({
+      id: uuidv4(),
+      session_id: session.id,
+      role: "user",
+      content_encrypted: encrypt(message),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
+  // Load conversation history from DB for LLM context
+  let history = [];
+  try {
+    const dbMessages = await ChatMessages.getBySession(session.id, { limit: 40 });
+    // Exclude the message we just inserted (last item); use the rest as history
+    history = dbMessages
+      .slice(0, -1)
+      .map((m) => ({ role: m.role, content: decrypt(m.content_encrypted) }));
+  } catch (err) {
+    console.warn("[chat] failed to load history:", err.message);
+  }
+
+  // RAG: embed the message and retrieve relevant diary chunks
   let context = "";
+  let contextEntryIds = [];
   try {
     const queryVec = await generateEmbedding(message);
-    const chunks = await Embeddings.similaritySearch(DEFAULT_USER_ID, queryVec, {
+    const chunks = await Embeddings.similaritySearch(req.user.id, queryVec, {
       k: 5,
       threshold: 0.3,
     });
+    contextEntryIds = [...new Set(chunks.map((c) => c.entry_id))];
     context = chunks.map((c) => decrypt(c.chunk_text_encrypted)).join("\n\n");
   } catch (err) {
     console.warn("[rag] vector search failed, proceeding without context:", err.message);
@@ -40,7 +124,17 @@ router.post("/", async (req, res) => {
     const fullText = await streamChat(history, message, context, (delta) => {
       res.write(`data: ${JSON.stringify({ delta })}\n\n`);
     });
-    res.write(`data: ${JSON.stringify({ done: true, text: fullText })}\n\n`);
+
+    // Persist assistant response
+    await ChatMessages.create({
+      id: uuidv4(),
+      session_id: session.id,
+      role: "assistant",
+      content_encrypted: encrypt(fullText),
+      context_entry_ids: contextEntryIds,
+    });
+
+    res.write(`data: ${JSON.stringify({ done: true, text: fullText, sessionId: session.id })}\n\n`);
     res.end();
   } catch (err) {
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);

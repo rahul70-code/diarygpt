@@ -5,7 +5,6 @@ import { Entries } from "../db/models/entries.js";
 import { Embeddings } from "../db/models/embeddings.js";
 import { analyzeEntry } from "../services/llm.js";
 import { generateEmbedding } from "../services/embedding.js";
-import { DEFAULT_USER_ID } from "../db/seed.js";
 import { encrypt, decrypt } from "../services/encryption.js";
 
 const router = Router();
@@ -23,9 +22,9 @@ function toResponse(row) {
 }
 
 // GET /api/diary — list all entries
-router.get("/", async (_req, res) => {
+router.get("/", async (req, res) => {
   try {
-    const rows = await Entries.getAllByUser(DEFAULT_USER_ID);
+    const rows = await Entries.getAllByUser(req.user.id);
     res.json(rows.map(toResponse));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -52,7 +51,7 @@ router.post("/", async (req, res) => {
     // Save entry first, then analyze in background so a missing API key doesn't block saving
     const entry = await Entries.create({
       id: uuidv4(),
-      user_id: DEFAULT_USER_ID,
+      user_id: req.user.id,
       title_encrypted: encrypt(title || "Untitled"),
       body_encrypted: encrypt(body),
       content_hash: createHash("sha256").update(body).digest("hex"),
