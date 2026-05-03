@@ -1,0 +1,606 @@
+// ─── State ────────────────────────────────────────────────────────────────────
+const state = {
+  token: localStorage.getItem("dg_token"),
+  user:  JSON.parse(localStorage.getItem("dg_user") || "null"),
+  // chat state survives route changes
+  chatSession:  null,   // { id, title }
+  chatMessages: [],
+  chatStreaming: false,
+};
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+const esc = (s) =>
+  String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const fmtDate = (iso) =>
+  iso
+    ? new Date(iso).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "";
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+const preview = (text, n = 130) => {
+  if (!text) return "";
+  const flat = text.replace(/\n+/g, " ");
+  return flat.length > n ? flat.slice(0, n) + "…" : flat;
+};
+
+// ─── API ──────────────────────────────────────────────────────────────────────
+async function api(path, { method = "GET", body } = {}) {
+  const opts = {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+    },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (res.status === 401) { doLogout(); return null; }
+  return res.json();
+}
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+function saveAuth(token, user) {
+  state.token = token;
+  state.user  = user;
+  localStorage.setItem("dg_token", token);
+  localStorage.setItem("dg_user", JSON.stringify(user));
+}
+
+window.doLogout = function () {
+  state.token = null;
+  state.user  = null;
+  state.chatSession  = null;
+  state.chatMessages = [];
+  localStorage.removeItem("dg_token");
+  localStorage.removeItem("dg_user");
+  nav("/login");
+};
+
+// ─── Router ───────────────────────────────────────────────────────────────────
+const nav = (path) => { window.location.hash = path; };
+const route = () => window.location.hash.slice(1) || "/diary";
+
+async function dispatch() {
+  const r    = route();
+  const $app = document.getElementById("app");
+
+  if (!state.token) {
+    if (r !== "/login" && r !== "/register") { nav("/login"); return; }
+  } else if (r === "/login" || r === "/register") {
+    nav("/diary"); return;
+  }
+
+  if (r === "/login")    { renderAuth($app, "login");    return; }
+  if (r === "/register") { renderAuth($app, "register"); return; }
+
+  ensureShell($app);
+  updateNav(r);
+
+  const $main = document.getElementById("main");
+  if (r === "/diary" || r === "/")     return renderDiaryList($main);
+  if (r === "/diary/new")              return renderEntryForm($main, null);
+  if (r.startsWith("/diary/"))         return renderEntryForm($main, r.slice(7));
+  if (r === "/chat")                   return renderChat($main);
+  if (r === "/search")                 return renderSearch($main);
+}
+
+window.addEventListener("hashchange", dispatch);
+document.addEventListener("DOMContentLoaded", dispatch);
+
+// ─── Shell ────────────────────────────────────────────────────────────────────
+function ensureShell($app) {
+  if (document.getElementById("sidebar")) return;
+  $app.innerHTML = `
+    <div class="layout">
+      <aside id="sidebar">
+        <div class="logo">Dairy<span>GPT</span></div>
+        <nav id="sidebar-nav">
+          <a href="#/diary"  class="nav-link" data-r="/diary">📓 Diary</a>
+          <a href="#/chat"   class="nav-link" data-r="/chat">💬 Chat</a>
+          <a href="#/search" class="nav-link" data-r="/search">🔍 Search</a>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="user-email">${esc(state.user?.email)}</div>
+          <button class="logout-btn" onclick="doLogout()">Sign out</button>
+        </div>
+      </aside>
+      <main id="main"></main>
+    </div>`;
+}
+
+function updateNav(r) {
+  document.querySelectorAll("#sidebar-nav .nav-link").forEach((a) => {
+    a.classList.toggle("active", r.startsWith(a.dataset.r));
+  });
+}
+
+// ─── Auth views ───────────────────────────────────────────────────────────────
+function renderAuth($app, mode) {
+  const isLogin = mode === "login";
+  $app.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">Dairy<span>GPT</span></div>
+        <p class="auth-tagline">${isLogin ? "Welcome back to your journal" : "Start your AI-powered journal"}</p>
+        <div id="auth-err" class="alert alert-error" hidden></div>
+        <div class="form-group">
+          <label class="label">Email</label>
+          <input id="auth-email" class="input" type="email" placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label class="label">Password</label>
+          <input id="auth-password" class="input" type="password" placeholder="••••••••"
+            autocomplete="${isLogin ? "current" : "new"}-password">
+        </div>
+        <button class="btn btn-primary btn-full" id="auth-submit">
+          ${isLogin ? "Sign in" : "Create account"}
+        </button>
+        <p class="auth-switch">
+          ${isLogin
+            ? 'New to DairyGPT? <a href="#/register">Create account</a>'
+            : 'Already have an account? <a href="#/login">Sign in</a>'}
+        </p>
+      </div>
+    </div>`;
+
+  const submit = async () => {
+    const email    = document.getElementById("auth-email").value.trim();
+    const password = document.getElementById("auth-password").value;
+    const $err     = document.getElementById("auth-err");
+    $err.hidden    = true;
+
+    if (!email || !password) { showErr($err, "Email and password are required"); return; }
+
+    const $btn = document.getElementById("auth-submit");
+    $btn.disabled    = true;
+    $btn.textContent = isLogin ? "Signing in…" : "Creating account…";
+
+    const res = await api(isLogin ? "/api/auth/login" : "/api/auth/register", {
+      method: "POST",
+      body: { email, password },
+    });
+
+    $btn.disabled    = false;
+    $btn.textContent = isLogin ? "Sign in" : "Create account";
+
+    if (!res || res.error) { showErr($err, res?.error || "Something went wrong"); return; }
+    saveAuth(res.token, res.user);
+    nav("/diary");
+  };
+
+  document.getElementById("auth-submit").addEventListener("click", submit);
+  ["auth-email", "auth-password"].forEach((id) => {
+    document.getElementById(id).addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+  });
+}
+
+// ─── Diary list ───────────────────────────────────────────────────────────────
+async function renderDiaryList($main) {
+  $main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">My Journal</h1>
+        <p class="page-sub" id="entry-count">Loading…</p>
+      </div>
+      <a href="#/diary/new" class="btn btn-primary">+ New entry</a>
+    </div>
+    <div id="entries-list" class="entries-list">
+      <div class="loader">Loading entries…</div>
+    </div>`;
+
+  const entries = await api("/api/diary");
+  if (!entries) return;
+
+  const $list  = document.getElementById("entries-list");
+  const $count = document.getElementById("entry-count");
+  $count.textContent =
+    entries.length === 0 ? "No entries yet" :
+    entries.length === 1 ? "1 entry" : `${entries.length} entries`;
+
+  if (entries.length === 0) {
+    $list.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📖</div>
+        <h3>Your journal is empty</h3>
+        <p>Write your first entry and let AI help you reflect.</p>
+        <a href="#/diary/new" class="btn btn-primary" style="margin-top:4px">Write first entry</a>
+      </div>`;
+    return;
+  }
+
+  $list.innerHTML = entries
+    .map(
+      (e) => `
+      <a href="#/diary/${e.id}" class="entry-card">
+        <div class="entry-card-row">
+          <span class="entry-card-title">${esc(e.title || "Untitled")}</span>
+          <span class="entry-card-date">${fmtDate(e.writtenAt)}</span>
+        </div>
+        <p class="entry-card-preview">${esc(preview(e.body))}</p>
+      </a>`
+    )
+    .join("");
+}
+
+// ─── Entry form (new & edit) ──────────────────────────────────────────────────
+async function renderEntryForm($main, id) {
+  const isNew = id === null;
+  let entry   = null;
+
+  if (!isNew) {
+    $main.innerHTML = '<div class="loader">Loading…</div>';
+    entry = await api(`/api/diary/${id}`);
+    if (!entry || entry.error) {
+      $main.innerHTML = '<div class="loader">Entry not found.</div>';
+      return;
+    }
+  }
+
+  $main.innerHTML = `
+    <div class="page-header">
+      <a href="#/diary" class="btn btn-ghost btn-sm">← Back</a>
+      <div class="entry-header-actions">
+        ${!isNew ? '<button class="btn btn-danger btn-sm" id="delete-btn">Delete</button>' : ""}
+        <button class="btn btn-primary btn-sm" id="save-btn">
+          ${isNew ? "Save entry" : "Save changes"}
+        </button>
+      </div>
+    </div>
+    <div id="entry-err" class="alert alert-error" style="margin:0 32px" hidden></div>
+    <div id="entry-ok"  class="alert alert-success" style="margin:0 32px" hidden></div>
+    <div class="entry-form">
+      <input
+        id="entry-title"
+        class="entry-title-input"
+        type="text"
+        placeholder="Entry title…"
+        value="${esc(entry?.title || "")}">
+      <div class="entry-meta">
+        <input
+          id="entry-date"
+          class="entry-date-input"
+          type="date"
+          value="${entry ? entry.writtenAt.slice(0, 10) : today()}">
+      </div>
+      <textarea
+        id="entry-body"
+        class="entry-body"
+        placeholder="What's on your mind today…"
+      >${esc(entry?.body || "")}</textarea>
+    </div>`;
+
+  // Auto-grow textarea
+  const $ta = document.getElementById("entry-body");
+  const grow = () => {
+    $ta.style.height = "auto";
+    $ta.style.height = Math.max(400, $ta.scrollHeight) + "px";
+  };
+  grow();
+  $ta.addEventListener("input", grow);
+
+  document.getElementById("save-btn").addEventListener("click", async () => {
+    const title     = document.getElementById("entry-title").value.trim();
+    const body      = document.getElementById("entry-body").value.trim();
+    const writtenAt = document.getElementById("entry-date").value;
+    const $err      = document.getElementById("entry-err");
+    const $ok       = document.getElementById("entry-ok");
+    $err.hidden = $ok.hidden = true;
+
+    if (!body) { showErr($err, "Body is required"); return; }
+
+    const $btn = document.getElementById("save-btn");
+    $btn.disabled    = true;
+    $btn.textContent = "Saving…";
+
+    const res = isNew
+      ? await api("/api/diary",         { method: "POST",  body: { title, body, writtenAt } })
+      : await api(`/api/diary/${id}`,   { method: "PATCH", body: { title, body, writtenAt } });
+
+    $btn.disabled    = false;
+    $btn.textContent = isNew ? "Save entry" : "Save changes";
+
+    if (!res || res.error) { showErr($err, res?.error || "Save failed"); return; }
+
+    if (isNew) {
+      nav(`/diary/${res.id}`);
+    } else {
+      $ok.textContent = "Saved!";
+      $ok.hidden = false;
+      setTimeout(() => { if ($ok) $ok.hidden = true; }, 2500);
+    }
+  });
+
+  if (!isNew) {
+    document.getElementById("delete-btn").addEventListener("click", async () => {
+      if (!confirm("Delete this entry? This cannot be undone.")) return;
+      const res = await api(`/api/diary/${id}`, { method: "DELETE" });
+      if (res?.success) nav("/diary");
+    });
+  }
+}
+
+// ─── Chat view ────────────────────────────────────────────────────────────────
+async function renderChat($main) {
+  const sessions = (await api("/api/chat/sessions")) || [];
+
+  $main.innerHTML = `
+    <div class="chat-layout">
+      <div class="chat-sidebar">
+        <div class="chat-sidebar-header">
+          <span>Conversations</span>
+          <button class="btn btn-ghost btn-sm" id="new-chat-btn">+ New</button>
+        </div>
+        <div id="session-list" class="session-list">
+          ${sessions.length === 0
+            ? '<p class="session-empty">No conversations yet</p>'
+            : sessions.map(sessionHtml).join("")}
+        </div>
+      </div>
+      <div class="chat-main">
+        <div class="chat-header" id="chat-header">
+          ${state.chatSession?.title ?? "Select or start a conversation"}
+        </div>
+        <div class="messages-area" id="messages-area">
+          ${renderWelcome()}
+        </div>
+        <div class="chat-input-area">
+          <textarea id="chat-input" class="chat-input" rows="1"
+            placeholder="Ask about your journal…"></textarea>
+          <button class="btn btn-primary" id="send-btn">Send</button>
+        </div>
+      </div>
+    </div>`;
+
+  // If there's an active session, load its messages
+  if (state.chatSession) {
+    document.getElementById("chat-header").textContent = state.chatSession.title;
+    await loadMessages();
+    highlightSession(state.chatSession.id);
+  }
+
+  // Session click
+  bindSessionClicks();
+
+  // New chat
+  document.getElementById("new-chat-btn").addEventListener("click", () => {
+    state.chatSession  = null;
+    state.chatMessages = [];
+    document.getElementById("chat-header").textContent = "New conversation";
+    document.getElementById("messages-area").innerHTML = renderWelcome("✨", "Start a new conversation — type a message below.");
+    document.querySelectorAll(".session-item").forEach((el) => el.classList.remove("active"));
+  });
+
+  // Send
+  const send = async () => {
+    if (state.chatStreaming) return;
+    const $input  = document.getElementById("chat-input");
+    const message = $input.value.trim();
+    if (!message) return;
+    $input.value = "";
+    resetInputHeight($input);
+    await streamMessage(message);
+  };
+
+  document.getElementById("send-btn").addEventListener("click", send);
+  document.getElementById("chat-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  // Auto-resize chat input
+  const $ci = document.getElementById("chat-input");
+  $ci.addEventListener("input", () => {
+    $ci.style.height = "auto";
+    $ci.style.height = Math.min($ci.scrollHeight, 120) + "px";
+  });
+}
+
+function sessionHtml(s) {
+  const active = state.chatSession?.id === s.id;
+  return `<div class="session-item${active ? " active" : ""}"
+    data-id="${s.id}" data-title="${esc(s.title)}">${esc(s.title)}</div>`;
+}
+
+function renderWelcome(icon = "💬", sub = "Ask questions about your past entries, explore patterns, or just reflect.") {
+  return `<div class="chat-welcome">
+    <div style="font-size:2rem;margin-bottom:8px">${icon}</div>
+    <h3>Chat with your journal</h3>
+    <p>${sub}</p>
+  </div>`;
+}
+
+async function loadMessages() {
+  const $area = document.getElementById("messages-area");
+  if (!$area || !state.chatSession) return;
+  $area.innerHTML = '<div class="loader">Loading…</div>';
+  const msgs = await api(`/api/chat/sessions/${state.chatSession.id}/messages`);
+  if (!msgs) return;
+  state.chatMessages = msgs;
+  paintMessages();
+}
+
+function paintMessages() {
+  const $area = document.getElementById("messages-area");
+  if (!$area) return;
+  if (state.chatMessages.length === 0) {
+    $area.innerHTML = renderWelcome("💬", "No messages yet — send one to begin.");
+    return;
+  }
+  $area.innerHTML = state.chatMessages
+    .map((m) => `<div class="message ${m.role}"><div class="message-content">${esc(m.content).replace(/\n/g, "<br>")}</div></div>`)
+    .join("");
+  $area.scrollTop = $area.scrollHeight;
+}
+
+async function streamMessage(message) {
+  const $area = document.getElementById("messages-area");
+  const $send = document.getElementById("send-btn");
+  if (!$area) return;
+
+  state.chatStreaming = true;
+  if ($send) $send.disabled = true;
+
+  // Paint user bubble immediately
+  state.chatMessages.push({ role: "user", content: message });
+  const assistantMsg = { role: "assistant", content: "" };
+  state.chatMessages.push(assistantMsg);
+  paintMessages();
+
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.token}`,
+      },
+      body: JSON.stringify({ message, sessionId: state.chatSession?.id }),
+    });
+
+    if (!resp.ok) {
+      assistantMsg.content = "Error: could not reach AI.";
+      paintMessages();
+      return;
+    }
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop(); // keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.delta) {
+            assistantMsg.content += data.delta;
+            paintMessages();
+          }
+          if (data.done && data.sessionId) {
+            const wasNew = !state.chatSession;
+            state.chatSession = { id: data.sessionId, title: message.length > 50 ? message.slice(0, 47) + "…" : message };
+            if (wasNew) await refreshSessionList();
+            highlightSession(data.sessionId);
+            document.getElementById("chat-header").textContent = state.chatSession.title;
+          }
+          if (data.error) assistantMsg.content = `Error: ${data.error}`;
+        } catch { /* partial JSON chunk — ignore */ }
+      }
+    }
+  } catch (err) {
+    assistantMsg.content = `Error: ${err.message}`;
+    paintMessages();
+  } finally {
+    state.chatStreaming = false;
+    if ($send) $send.disabled = false;
+    const $a = document.getElementById("messages-area");
+    if ($a) $a.scrollTop = $a.scrollHeight;
+  }
+}
+
+async function refreshSessionList() {
+  const sessions = (await api("/api/chat/sessions")) || [];
+  const $list = document.getElementById("session-list");
+  if (!$list) return;
+  $list.innerHTML = sessions.length === 0
+    ? '<p class="session-empty">No conversations yet</p>'
+    : sessions.map(sessionHtml).join("");
+  bindSessionClicks();
+}
+
+function highlightSession(id) {
+  document.querySelectorAll(".session-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.id === id);
+  });
+}
+
+function bindSessionClicks() {
+  document.querySelectorAll(".session-item").forEach((item) => {
+    item.addEventListener("click", async () => {
+      state.chatSession  = { id: item.dataset.id, title: item.dataset.title };
+      state.chatMessages = [];
+      document.getElementById("chat-header").textContent = item.dataset.title;
+      highlightSession(item.dataset.id);
+      await loadMessages();
+    });
+  });
+}
+
+function resetInputHeight($el) {
+  $el.style.height = "auto";
+}
+
+// ─── Search view ──────────────────────────────────────────────────────────────
+function renderSearch($main) {
+  $main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Search</h1>
+        <p class="page-sub">Find entries by meaning, not just keywords</p>
+      </div>
+    </div>
+    <div class="search-container">
+      <div class="search-input-wrap">
+        <input id="search-input" class="search-field" type="text"
+          placeholder="e.g. times I felt anxious, moments of joy, work stress…">
+        <button class="btn btn-primary" id="search-btn">Search</button>
+      </div>
+      <div id="search-results"></div>
+    </div>`;
+
+  const doSearch = async () => {
+    const query    = document.getElementById("search-input").value.trim();
+    const $results = document.getElementById("search-results");
+    if (!query) return;
+    $results.innerHTML = '<div class="loader">Searching…</div>';
+
+    const results = await api("/api/search", { method: "POST", body: { query, k: 8 } });
+    if (!results) return;
+
+    if (results.length === 0) {
+      $results.innerHTML = '<div class="empty-state"><p>No matching entries found.</p></div>';
+      return;
+    }
+
+    $results.innerHTML = results
+      .map(
+        (r) => `
+        <a href="#/diary/${r.id}" class="search-result">
+          <div class="search-result-header">
+            <span class="entry-card-title">${esc(r.title || "Untitled")}</span>
+            <span class="search-score">${Math.round(r.score * 100)}% match · ${fmtDate(r.writtenAt)}</span>
+          </div>
+          <p class="entry-card-preview">${esc(preview(r.body))}</p>
+        </a>`
+      )
+      .join("");
+  };
+
+  document.getElementById("search-btn").addEventListener("click", doSearch);
+  document.getElementById("search-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doSearch();
+  });
+}
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+function showErr($el, msg) {
+  $el.textContent = msg;
+  $el.hidden = false;
+}
