@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { Entries } from "../db/models/entries.js";
 import { Embeddings } from "../db/models/embeddings.js";
+import { Analysis } from "../db/models/analysis.js";
 import { analyzeEntry } from "../services/llm.js";
 import { generateEmbedding } from "../services/embedding.js";
 import { encrypt, decrypt } from "../services/encryption.js";
@@ -58,7 +59,17 @@ router.post("/", async (req, res) => {
     });
 
     analyzeEntry(body)
-      .then((analysis) => console.log("[analyze] entry", entry.id, analysis))
+      .then((analysis) =>
+        Analysis.create({
+          id: uuidv4(),
+          entry_id: entry.id,
+          mood: analysis.mood,
+          themes: analysis.themes,
+          reflection_encrypted: encrypt(analysis.reflection || ""),
+          follow_up_question: analysis.followUpQuestion,
+        })
+      )
+      .then(() => console.log("[analyze] saved for entry", entry.id))
       .catch((err) => console.error("[analyze] failed for entry", entry.id, err.message));
 
     generateEmbedding(body)

@@ -28,6 +28,14 @@ export async function analyzeEntry(text) {
   return JSON.parse(result.response.text());
 }
 
+export async function generateText(systemPrompt, userMessage) {
+  const { model } = getConfig();
+  const genAI = getClient();
+  const gemini = genAI.getGenerativeModel({ model, systemInstruction: systemPrompt });
+  const result = await gemini.generateContent(userMessage);
+  return result.response.text();
+}
+
 export async function streamChat(history, message, context, onDelta) {
   const { model } = getConfig();
   const genAI = getClient();

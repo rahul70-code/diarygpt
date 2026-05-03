@@ -92,6 +92,7 @@ async function dispatch() {
   if (r.startsWith("/diary/"))         return renderEntryForm($main, r.slice(7));
   if (r === "/chat")                   return renderChat($main);
   if (r === "/search")                 return renderSearch($main);
+  if (r === "/insights")               return renderInsights($main);
 }
 
 window.addEventListener("hashchange", dispatch);
@@ -105,9 +106,10 @@ function ensureShell($app) {
       <aside id="sidebar">
         <div class="logo">Dairy<span>GPT</span></div>
         <nav id="sidebar-nav">
-          <a href="#/diary"  class="nav-link" data-r="/diary">📓 Diary</a>
-          <a href="#/chat"   class="nav-link" data-r="/chat">💬 Chat</a>
-          <a href="#/search" class="nav-link" data-r="/search">🔍 Search</a>
+          <a href="#/diary"    class="nav-link" data-r="/diary">📓 Diary</a>
+          <a href="#/insights" class="nav-link" data-r="/insights">✨ Insights</a>
+          <a href="#/chat"     class="nav-link" data-r="/chat">💬 Chat</a>
+          <a href="#/search"   class="nav-link" data-r="/search">🔍 Search</a>
         </nav>
         <div class="sidebar-footer">
           <div class="user-email">${esc(state.user?.email)}</div>
@@ -274,6 +276,15 @@ async function renderEntryForm($main, id) {
           type="date"
           value="${entry ? entry.writtenAt.slice(0, 10) : today()}">
       </div>
+      ${isNew ? `
+      <div id="prompt-area" style="margin-bottom:14px">
+        <button class="btn btn-ghost btn-sm" id="prompt-btn">✨ Suggest a prompt</button>
+        <div id="prompt-box" class="prompt-box" hidden></div>
+        <div class="prompt-actions" id="prompt-actions" hidden>
+          <button class="btn btn-ghost btn-sm" id="use-prompt-btn">Use this prompt</button>
+          <button class="btn btn-ghost btn-sm" id="new-prompt-btn">Try another</button>
+        </div>
+      </div>` : ""}
       <textarea
         id="entry-body"
         class="entry-body"
@@ -289,6 +300,39 @@ async function renderEntryForm($main, id) {
   };
   grow();
   $ta.addEventListener("input", grow);
+
+  // Prompt suggestion (new entries only)
+  if (isNew) {
+    let lastPrompt = "";
+    const fetchPrompt = async () => {
+      const $btn  = document.getElementById("prompt-btn");
+      const $box  = document.getElementById("prompt-box");
+      const $acts = document.getElementById("prompt-actions");
+      $btn.disabled    = true;
+      $btn.textContent = "✨ Thinking…";
+      const res = await api("/api/insights/prompt");
+      $btn.disabled    = false;
+      $btn.textContent = "✨ Suggest another";
+      if (!res || res.error) return;
+      lastPrompt       = res.prompt;
+      $box.textContent = res.prompt;
+      $box.hidden      = false;
+      $acts.hidden     = false;
+    };
+
+    document.getElementById("prompt-btn").addEventListener("click", fetchPrompt);
+
+    document.getElementById("use-prompt-btn").addEventListener("click", () => {
+      const $ta = document.getElementById("entry-body");
+      $ta.value = lastPrompt + "\n\n";
+      grow();
+      $ta.focus();
+      $ta.setSelectionRange($ta.value.length, $ta.value.length);
+      document.getElementById("prompt-area").hidden = true;
+    });
+
+    document.getElementById("new-prompt-btn").addEventListener("click", fetchPrompt);
+  }
 
   document.getElementById("save-btn").addEventListener("click", async () => {
     const title     = document.getElementById("entry-title").value.trim();
@@ -545,6 +589,107 @@ function bindSessionClicks() {
 
 function resetInputHeight($el) {
   $el.style.height = "auto";
+}
+
+// ─── Insights view ────────────────────────────────────────────────────────────
+const MOOD_COLORS = {
+  happy: "#fbbf24", calm: "#34d399", excited: "#fb923c",
+  reflective: "#a78bfa", sad: "#60a5fa", anxious: "#f87171",
+  angry: "#ef4444", mixed: "#94a3b8",
+};
+
+async function renderInsights($main) {
+  $main.innerHTML = '<div class="loader">Loading insights…</div>';
+
+  const data = await api("/api/insights/mood?period=30");
+  if (!data) return;
+
+  const { moodCounts, streak, memories, totalEntries } = data;
+  const hasMoods = Object.keys(moodCounts).length > 0;
+
+  $main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Insights</h1>
+        <p class="page-sub">${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} in the last 30 days</p>
+      </div>
+      ${streak > 0 ? `<div class="streak-badge">🔥 ${streak}-day streak</div>` : ""}
+    </div>
+    <div class="insights-wrap">
+      <div class="insights-grid">
+
+        <!-- Mood distribution -->
+        <div class="insight-card">
+          <h3>Mood this month</h3>
+          ${hasMoods
+            ? `<div class="chart-wrap"><canvas id="mood-chart"></canvas></div>
+               <div class="mood-legend" id="mood-legend"></div>`
+            : `<p class="no-mood-data">No mood data yet — write a few entries and analysis will appear here.</p>`}
+        </div>
+
+        <!-- Weekly reflection -->
+        <div class="insight-card">
+          <h3>Weekly reflection</h3>
+          <p class="insight-sub">AI summary of your last 7 days</p>
+          <button class="btn btn-primary btn-sm" id="gen-weekly-btn">Generate summary</button>
+          <div id="weekly-output" class="weekly-output" hidden></div>
+        </div>
+
+        ${memories.length > 0 ? `
+        <!-- On this day -->
+        <div class="insight-card insight-full">
+          <h3>On this day…</h3>
+          <div class="memories-list">
+            ${memories.map((m) => `
+              <a href="#/diary/${m.id}" class="memory-card">
+                <div class="memory-meta">
+                  <span class="memory-year">${m.yearsAgo} year${m.yearsAgo > 1 ? "s" : ""} ago</span>
+                  <span class="memory-title">${esc(m.title)}</span>
+                </div>
+                <p class="memory-snippet">${esc(m.snippet)}${m.snippet.length === 180 ? "…" : ""}</p>
+              </a>`).join("")}
+          </div>
+        </div>` : ""}
+
+      </div>
+    </div>`;
+
+  // Draw doughnut chart
+  if (hasMoods) {
+    const labels = Object.keys(moodCounts);
+    const values = labels.map((l) => moodCounts[l]);
+    const colors = labels.map((l) => MOOD_COLORS[l] || "#94a3b8");
+
+    new Chart(document.getElementById("mood-chart"), {
+      type: "doughnut",
+      data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2, borderColor: "#fff" }] },
+      options: { plugins: { legend: { display: false } }, cutout: "62%", animation: { duration: 500 } },
+    });
+
+    document.getElementById("mood-legend").innerHTML = labels
+      .map((l, i) => `<div class="legend-item">
+        <span class="legend-dot" style="background:${colors[i]}"></span>
+        <span>${l} (${values[i]})</span>
+      </div>`)
+      .join("");
+  }
+
+  // Weekly summary button
+  document.getElementById("gen-weekly-btn").addEventListener("click", async () => {
+    const $btn    = document.getElementById("gen-weekly-btn");
+    const $output = document.getElementById("weekly-output");
+    $btn.disabled    = true;
+    $btn.textContent = "Generating…";
+    $output.hidden   = false;
+    $output.textContent = "Thinking…";
+
+    const res = await api("/api/insights/weekly", { method: "POST" });
+    $btn.disabled    = false;
+    $btn.textContent = "Regenerate";
+
+    if (!res || res.error) { $output.textContent = "Failed to generate — try again."; return; }
+    $output.textContent = res.summary;
+  });
 }
 
 // ─── Search view ──────────────────────────────────────────────────────────────

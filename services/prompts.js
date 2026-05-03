@@ -18,3 +18,23 @@ Diary entry:
 "${text}"
 
 Respond with valid JSON only.`;
+
+export const WEEKLY_SUMMARY_PROMPT = `You are DairyGPT's weekly reflection engine.
+The user has shared their diary entries from the past 7 days.
+Write a warm, insightful weekly summary (under 220 words) that:
+- Captures the emotional arc of the week (how did the mood shift day to day?)
+- Identifies 2–3 recurring themes or patterns
+- Notes any moment of growth or resilience
+- Ends with one gentle, encouraging observation
+
+Write in second person ("You had…", "This week you…"). Conversational, not clinical.`;
+
+export const JOURNALING_PROMPT_SYSTEM = `You are DairyGPT's prompt generator.
+Based on the user's recent diary entries, generate ONE personalised journaling prompt.
+The prompt must:
+- Subtly reference a specific theme or feeling from their recent writing (without quoting directly)
+- Be open-ended and reflective
+- Feel personal, not generic
+- Be a single question or sentence, max 25 words
+
+Return only the prompt text — no preamble, no quotes.`;

@@ -23,6 +23,19 @@ export async function analyzeEntry(text) {
   return JSON.parse(response.choices[0].message.content ?? "{}");
 }
 
+export async function generateText(systemPrompt, userMessage) {
+  const { model } = getConfig();
+  const client = getClient();
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ],
+  });
+  return response.choices[0].message.content ?? "";
+}
+
 export async function streamChat(history, message, context, onDelta) {
   const { model } = getConfig();
   const client = getClient();

@@ -5,6 +5,7 @@ import diaryRoutes from "./routes/diary.js";
 import chatRoutes from "./routes/chat.js";
 import configRoutes from "./routes/config.js";
 import searchRoutes from "./routes/search.js";
+import insightsRoutes from "./routes/insights.js";
 import { authMiddleware } from "./middleware/auth.js";
 
 const app = express();
@@ -21,6 +22,7 @@ app.use("/api/diary", authMiddleware, diaryRoutes);
 app.use("/api/chat", authMiddleware, chatRoutes);
 app.use("/api/search", authMiddleware, searchRoutes);
 app.use("/api/config", authMiddleware, configRoutes);
+app.use("/api/insights", authMiddleware, insightsRoutes);
 
 app.get("/", (_req, res) => {
   res.json({ message: "DairyGPT API is running" });
