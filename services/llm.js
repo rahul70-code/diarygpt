@@ -13,7 +13,7 @@ function getProvider() {
   return p;
 }
 
-export const analyzeEntry    = (text) => getProvider().analyzeEntry(text);
-export const generateText    = (systemPrompt, userMessage) => getProvider().generateText(systemPrompt, userMessage);
-export const streamChat      = (history, message, context, onDelta) =>
-  getProvider().streamChat(history, message, context, onDelta);
+export const analyzeEntry            = (text) => getProvider().analyzeEntry(text);
+export const generateText            = (systemPrompt, userMessage) => getProvider().generateText(systemPrompt, userMessage);
+export const streamChat              = (history, message, context, onDelta) => getProvider().streamChat(history, message, context, onDelta);
+export const streamWithSystemPrompt  = (systemPrompt, history, message, onDelta) => getProvider().streamWithSystemPrompt(systemPrompt, history, message, onDelta);

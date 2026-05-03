@@ -23,7 +23,9 @@ Runs entirely on your machine (SQLite + local Ollama). Optional cloud sync via P
 | **AI journaling prompts** | Personalized "what to write about" suggestions based on recent entries |
 | **Voice dictation** | Speak a diary entry — browser transcribes it into the text area |
 | **Voice chat** | Ask the AI a question out loud, hear the response read back |
-| **Encryption at rest** | AES-256-GCM on all diary and chat content |
+| **AI therapy companion** | Structured emotional support using CBT/DBT techniques, with crisis detection and hardcoded safety resources |
+| **Mood check-ins** | 1–10 mood logging before therapy sessions, history chart |
+| **Encryption at rest** | AES-256-GCM on all diary, chat, and therapy content |
 | **Dual storage** | SQLite locally (default) or PostgreSQL for multi-device sync |
 
 ---
@@ -115,6 +117,16 @@ Go to **✨ Insights** for:
 - "On this day…" — entries from the same date in past years
 - Weekly reflection — click **Generate summary** for an AI summary of the past 7 days
 
+### Therapy companion
+
+Go to **🧘 Therapy** for structured emotional support sessions. The AI uses CBT thought-reframing, DBT skills, and reflective listening — not generic advice.
+
+- Rate your mood (1–10) at the start of each session
+- Sessions are saved and resumable — the AI remembers what you discussed
+- Voice input and voice responses work here too
+
+**Important:** A disclosure banner is always visible: *"This is an AI companion, not a licensed therapist."* If crisis language is detected in any message, the LLM is bypassed entirely and hardcoded crisis resources are shown (988, Crisis Text Line, findahelpline.com).
+
 ### Semantic search
 
 Go to **🔍 Search**. Search by meaning: "times I felt overwhelmed", "moments of gratitude", "conflicts at work".
@@ -170,10 +182,11 @@ Express API (index.js)
     ├── /api/search      → semantic search
     ├── /api/insights    → mood data, weekly summary, journaling prompt
     ├── /api/voice       → Whisper transcription, OpenAI TTS
+    ├── /api/therapy     → therapy sessions, messages, mood logs
     └── /api/config      → switch LLM provider / model
 
 Service Layer
-    ├── llm.js           → analyzeEntry, generateText, streamChat
+    ├── llm.js           → analyzeEntry, generateText, streamChat, streamWithSystemPrompt
     ├── embedding.js     → Ollama or OpenAI embeddings
     ├── encryption.js    → AES-256-GCM encrypt/decrypt
     └── providers/       → anthropic.js, openai.js, gemini.js
@@ -199,6 +212,7 @@ DairyGPT/
 │   ├── search.js             # Semantic search
 │   ├── insights.js           # Mood dashboard, weekly summary, prompt
 │   ├── voice.js              # Whisper transcription, OpenAI TTS
+│   ├── therapy.js            # Therapy sessions, crisis gate, mood logs
 │   └── config.js             # Provider / model config
 ├── services/
 │   ├── llm.js                # Provider factory

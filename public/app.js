@@ -145,6 +145,7 @@ async function dispatch() {
   if (r === "/diary/new")              return renderEntryForm($main, null);
   if (r.startsWith("/diary/"))         return renderEntryForm($main, r.slice(7));
   if (r === "/chat")                   return renderChat($main);
+  if (r === "/therapy")                return renderTherapy($main);
   if (r === "/search")                 return renderSearch($main);
   if (r === "/insights")               return renderInsights($main);
 }
@@ -163,6 +164,7 @@ function ensureShell($app) {
           <a href="#/diary"    class="nav-link" data-r="/diary">📓 Diary</a>
           <a href="#/insights" class="nav-link" data-r="/insights">✨ Insights</a>
           <a href="#/chat"     class="nav-link" data-r="/chat">💬 Chat</a>
+          <a href="#/therapy"  class="nav-link" data-r="/therapy">🧘 Therapy</a>
           <a href="#/search"   class="nav-link" data-r="/search">🔍 Search</a>
         </nav>
         <div class="sidebar-footer">
@@ -840,6 +842,258 @@ async function renderInsights($main) {
 
     if (!res || res.error) { $output.textContent = "Failed to generate — try again."; return; }
     $output.textContent = res.summary;
+  });
+}
+
+// ─── Therapy view ─────────────────────────────────────────────────────────────
+const therapy = {
+  session:   null,   // { id, title }
+  messages:  [],
+  streaming: false,
+};
+
+async function renderTherapy($main) {
+  const sessions = (await api("/api/therapy/sessions")) || [];
+
+  $main.innerHTML = `
+    <div class="therapy-disclosure">
+      ⚠️ This is an AI companion for emotional support — not a licensed therapist or medical professional.
+      In a crisis, call or text <strong>988</strong> (US) or visit <a href="https://findahelpline.com" target="_blank" rel="noopener">findahelpline.com</a>.
+    </div>
+    <div class="therapy-layout">
+      <div class="therapy-sidebar">
+        <div class="therapy-sidebar-header">
+          <span>Sessions</span>
+          <button class="btn btn-ghost btn-sm" id="new-therapy-btn">+ New</button>
+        </div>
+        <div class="therapy-session-list" id="therapy-session-list">
+          ${sessions.length === 0
+            ? '<p class="therapy-session-empty">No sessions yet</p>'
+            : sessions.map(therapySessionHtml).join("")}
+        </div>
+      </div>
+      <div class="therapy-main">
+        <div class="therapy-header" id="therapy-header">
+          ${therapy.session?.title ?? "Start a new session or continue one"}
+        </div>
+        ${moodCheckinHtml()}
+        <div class="messages-area" id="therapy-messages">
+          ${therapyWelcomeHtml()}
+        </div>
+        <div class="therapy-input-area">
+          <textarea id="therapy-input" class="chat-input" rows="1"
+            placeholder="What's on your mind today…"></textarea>
+          <button class="btn-mic" id="therapy-mic" title="Voice input">🎤</button>
+          <button class="btn btn-primary therapy-send" id="therapy-send">Send</button>
+        </div>
+      </div>
+    </div>`;
+
+  if (therapy.session) {
+    document.getElementById("therapy-header").textContent = therapy.session.title;
+    highlightTherapySession(therapy.session.id);
+    await loadTherapyMessages();
+  }
+
+  bindTherapySessionClicks();
+
+  document.getElementById("new-therapy-btn").addEventListener("click", () => {
+    therapy.session  = null;
+    therapy.messages = [];
+    document.getElementById("therapy-header").textContent = "New session";
+    document.getElementById("therapy-messages").innerHTML = therapyWelcomeHtml();
+    showMoodCheckin(true);
+    document.querySelectorAll(".therapy-session-item").forEach((el) => el.classList.remove("active"));
+  });
+
+  // Mood scale buttons
+  document.querySelectorAll(".mood-num").forEach(($btn) => {
+    $btn.addEventListener("click", async () => {
+      document.querySelectorAll(".mood-num").forEach((b) => b.classList.remove("selected"));
+      $btn.classList.add("selected");
+      const score = parseInt($btn.dataset.score);
+      await api("/api/therapy/mood", { method: "POST", body: { score } });
+      setTimeout(() => showMoodCheckin(false), 600);
+    });
+  });
+
+  const sendTherapy = async () => {
+    if (therapy.streaming) return;
+    const $input = document.getElementById("therapy-input");
+    const message = $input.value.trim();
+    if (!message) return;
+    $input.value = "";
+    resetInputHeight($input);
+    await streamTherapy(message);
+  };
+
+  document.getElementById("therapy-send").addEventListener("click", sendTherapy);
+  document.getElementById("therapy-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTherapy(); }
+  });
+
+  const $ti = document.getElementById("therapy-input");
+  $ti.addEventListener("input", () => {
+    $ti.style.height = "auto";
+    $ti.style.height = Math.min($ti.scrollHeight, 120) + "px";
+  });
+
+  // Mic support in therapy
+  const $mic = document.getElementById("therapy-mic");
+  if (!voice.supported) {
+    $mic.style.opacity = "0.4"; $mic.style.cursor = "not-allowed";
+  } else {
+    let micActive = false;
+    $mic.addEventListener("click", () => {
+      if (micActive) { stopDictation(); micActive = false; $mic.textContent = "🎤"; $mic.classList.remove("recording"); return; }
+      micActive = true; $mic.textContent = "⏹"; $mic.classList.add("recording");
+      startDictation(
+        (interim) => { const $i = document.getElementById("therapy-input"); if ($i) $i.value = interim; },
+        null,
+        () => { micActive = false; $mic.textContent = "🎤"; $mic.classList.remove("recording"); const v = document.getElementById("therapy-input")?.value?.trim(); if (v) sendTherapy(); }
+      );
+    });
+  }
+}
+
+function therapySessionHtml(s) {
+  const active = therapy.session?.id === s.id;
+  return `<div class="therapy-session-item${active ? " active" : ""}" data-id="${s.id}" data-title="${esc(s.title)}">${esc(s.title)}</div>`;
+}
+
+function therapyWelcomeHtml() {
+  return `<div class="chat-welcome">
+    <div style="font-size:2rem;margin-bottom:8px">🧘</div>
+    <h3>Your safe space to reflect</h3>
+    <p>Share what's on your mind. I'll listen without judgement and help you explore what you're feeling.</p>
+  </div>`;
+}
+
+function moodCheckinHtml() {
+  return `<div class="mood-checkin" id="mood-checkin">
+    <h4>How are you feeling right now?</h4>
+    <div class="mood-scale">
+      ${[1,2,3,4,5,6,7,8,9,10].map((n) => `<button class="mood-num" data-score="${n}">${n}</button>`).join("")}
+    </div>
+    <p class="mood-scale-labels"><span>Struggling</span><span>Doing great</span></p>
+  </div>`;
+}
+
+function showMoodCheckin(show) {
+  const $c = document.getElementById("mood-checkin");
+  if ($c) $c.style.display = show ? "" : "none";
+}
+
+async function loadTherapyMessages() {
+  const $area = document.getElementById("therapy-messages");
+  if (!$area || !therapy.session) return;
+  $area.innerHTML = '<div class="loader">Loading…</div>';
+  const msgs = await api(`/api/therapy/sessions/${therapy.session.id}/messages`);
+  if (!msgs) return;
+  therapy.messages = msgs;
+  paintTherapyMessages();
+  showMoodCheckin(false);
+}
+
+function paintTherapyMessages() {
+  const $area = document.getElementById("therapy-messages");
+  if (!$area) return;
+  if (therapy.messages.length === 0) { $area.innerHTML = therapyWelcomeHtml(); return; }
+  $area.innerHTML = therapy.messages.map((m) =>
+    `<div class="message ${m.role}${m.crisis ? " crisis" : ""}">
+      <div class="message-content">${esc(m.content).replace(/\n/g, "<br>")}</div>
+    </div>`
+  ).join("");
+  $area.scrollTop = $area.scrollHeight;
+}
+
+async function streamTherapy(message) {
+  const $area = document.getElementById("therapy-messages");
+  const $send = document.getElementById("therapy-send");
+  if (!$area) return;
+
+  therapy.streaming = true;
+  if ($send) $send.disabled = true;
+  showMoodCheckin(false);
+
+  therapy.messages.push({ role: "user", content: message });
+  const assistantMsg = { role: "assistant", content: "" };
+  therapy.messages.push(assistantMsg);
+  paintTherapyMessages();
+
+  try {
+    const resp = await fetch("/api/therapy/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.token}` },
+      body: JSON.stringify({ message, sessionId: therapy.session?.id }),
+    });
+    if (!resp.ok) { assistantMsg.content = "Could not reach AI. Please try again."; paintTherapyMessages(); return; }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.delta) { assistantMsg.content += data.delta; paintTherapyMessages(); }
+          if (data.crisis) assistantMsg.crisis = true;
+          if (data.done && data.sessionId) {
+            const wasNew = !therapy.session;
+            therapy.session = { id: data.sessionId, title: message.length > 50 ? message.slice(0, 47) + "…" : message };
+            document.getElementById("therapy-header").textContent = therapy.session.title;
+            if (wasNew) await refreshTherapySessions();
+            highlightTherapySession(data.sessionId);
+          }
+          if (data.error) assistantMsg.content = `Error: ${data.error}`;
+        } catch { /* partial chunk */ }
+      }
+    }
+  } catch (err) {
+    assistantMsg.content = `Error: ${err.message}`;
+    paintTherapyMessages();
+  } finally {
+    therapy.streaming = false;
+    if ($send) $send.disabled = false;
+    const $a = document.getElementById("therapy-messages");
+    if ($a) $a.scrollTop = $a.scrollHeight;
+    if (assistantMsg.content && !assistantMsg.content.startsWith("Error:") && !assistantMsg.crisis) {
+      speak(assistantMsg.content);
+    }
+  }
+}
+
+async function refreshTherapySessions() {
+  const sessions = (await api("/api/therapy/sessions")) || [];
+  const $list = document.getElementById("therapy-session-list");
+  if (!$list) return;
+  $list.innerHTML = sessions.length === 0
+    ? '<p class="therapy-session-empty">No sessions yet</p>'
+    : sessions.map(therapySessionHtml).join("");
+  bindTherapySessionClicks();
+}
+
+function highlightTherapySession(id) {
+  document.querySelectorAll(".therapy-session-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.id === id);
+  });
+}
+
+function bindTherapySessionClicks() {
+  document.querySelectorAll(".therapy-session-item").forEach((item) => {
+    item.addEventListener("click", async () => {
+      therapy.session  = { id: item.dataset.id, title: item.dataset.title };
+      therapy.messages = [];
+      document.getElementById("therapy-header").textContent = item.dataset.title;
+      highlightTherapySession(item.dataset.id);
+      await loadTherapyMessages();
+    });
   });
 }
 

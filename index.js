@@ -7,6 +7,7 @@ import configRoutes from "./routes/config.js";
 import searchRoutes from "./routes/search.js";
 import insightsRoutes from "./routes/insights.js";
 import voiceRoutes from "./routes/voice.js";
+import therapyRoutes from "./routes/therapy.js";
 import { authMiddleware } from "./middleware/auth.js";
 
 const app = express();
@@ -25,6 +26,7 @@ app.use("/api/search", authMiddleware, searchRoutes);
 app.use("/api/config", authMiddleware, configRoutes);
 app.use("/api/insights", authMiddleware, insightsRoutes);
 app.use("/api/voice", authMiddleware, voiceRoutes);
+app.use("/api/therapy", authMiddleware, therapyRoutes);
 
 app.get("/", (_req, res) => {
   res.json({ message: "DairyGPT API is running" });

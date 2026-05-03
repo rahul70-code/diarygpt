@@ -36,6 +36,20 @@ export async function generateText(systemPrompt, userMessage) {
   return result.response.text();
 }
 
+export async function streamWithSystemPrompt(systemPrompt, history, message, onDelta) {
+  const { model } = getConfig();
+  const genAI = getClient();
+  const gemini = genAI.getGenerativeModel({ model, systemInstruction: systemPrompt });
+  const chat = gemini.startChat({ history: toGeminiHistory(history) });
+  const result = await chat.sendMessageStream(message);
+  let fullText = "";
+  for await (const chunk of result.stream) {
+    const delta = chunk.text();
+    if (delta) { onDelta(delta); fullText += delta; }
+  }
+  return fullText;
+}
+
 export async function streamChat(history, message, context, onDelta) {
   const { model } = getConfig();
   const genAI = getClient();

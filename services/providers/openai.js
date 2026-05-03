@@ -36,6 +36,22 @@ export async function generateText(systemPrompt, userMessage) {
   return response.choices[0].message.content ?? "";
 }
 
+export async function streamWithSystemPrompt(systemPrompt, history, message, onDelta) {
+  const { model } = getConfig();
+  const client = getClient();
+  const stream = await client.chat.completions.create({
+    model,
+    stream: true,
+    messages: [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: message }],
+  });
+  let fullText = "";
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta?.content ?? "";
+    if (delta) { onDelta(delta); fullText += delta; }
+  }
+  return fullText;
+}
+
 export async function streamChat(history, message, context, onDelta) {
   const { model } = getConfig();
   const client = getClient();
