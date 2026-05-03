@@ -8,6 +8,60 @@ const state = {
   chatStreaming: false,
 };
 
+// ─── Voice ────────────────────────────────────────────────────────────────────
+const voice = {
+  ttsEnabled:  true,
+  recognition: null,
+  supported:   !!(window.SpeechRecognition || window.webkitSpeechRecognition),
+};
+
+/** Speak text aloud using the browser SpeechSynthesis API (free, no backend). */
+function speak(text) {
+  if (!voice.ttsEnabled || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate  = 0.92;
+  utter.pitch = 1.0;
+  window.speechSynthesis.speak(utter);
+}
+
+/**
+ * Start speech recognition.
+ * onInterim(text) — called continuously while user is speaking
+ * onFinal(text)   — called when a final result is committed
+ * onEnd()         — called when recognition stops (silence or manual stop)
+ */
+function startDictation(onInterim, onFinal, onEnd) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert("Voice recognition isn't supported in this browser. Try Chrome or Edge.");
+    return null;
+  }
+  const r = new SR();
+  r.continuous      = false;
+  r.interimResults  = true;
+  r.lang            = "en-US";
+
+  r.onresult = (e) => {
+    const results  = Array.from(e.results);
+    const interim  = results.filter((r) => !r.isFinal).map((r) => r[0].transcript).join("");
+    const final    = results.filter((r) =>  r.isFinal).map((r) => r[0].transcript).join("");
+    if (interim) onInterim?.(interim);
+    if (final)   onFinal?.(final);
+  };
+
+  r.onerror = (e) => { console.warn("[voice]", e.error); onEnd?.(); };
+  r.onend   = () => onEnd?.();
+  r.start();
+  voice.recognition = r;
+  return r;
+}
+
+function stopDictation() {
+  voice.recognition?.stop();
+  voice.recognition = null;
+}
+
 // ─── Utils ────────────────────────────────────────────────────────────────────
 const esc = (s) =>
   String(s ?? "")
@@ -290,6 +344,10 @@ async function renderEntryForm($main, id) {
         class="entry-body"
         placeholder="What's on your mind today…"
       >${esc(entry?.body || "")}</textarea>
+      <div class="voice-entry-bar">
+        <button class="btn btn-ghost btn-sm" id="dictate-btn">🎤 Dictate</button>
+        <span id="dictate-preview" class="dictate-preview" hidden></span>
+      </div>
     </div>`;
 
   // Auto-grow textarea
@@ -300,6 +358,46 @@ async function renderEntryForm($main, id) {
   };
   grow();
   $ta.addEventListener("input", grow);
+
+  // Dictation button
+  let dictating = false;
+  const $dictBtn     = document.getElementById("dictate-btn");
+  const $dictPreview = document.getElementById("dictate-preview");
+
+  $dictBtn.addEventListener("click", () => {
+    if (dictating) {
+      stopDictation();
+      dictating = false;
+      $dictBtn.textContent = "🎤 Dictate";
+      $dictBtn.classList.remove("recording");
+      $dictPreview.hidden = true;
+      return;
+    }
+    if (!voice.supported) {
+      alert("Voice recognition isn't supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+    dictating = true;
+    $dictBtn.textContent = "⏹ Stop";
+    $dictBtn.classList.add("recording");
+    $dictPreview.hidden  = false;
+    $dictPreview.textContent = "Listening…";
+
+    startDictation(
+      (interim) => { $dictPreview.textContent = interim; },
+      (final) => {
+        const $body = document.getElementById("entry-body");
+        if ($body) { $body.value += ($body.value ? " " : "") + final; grow(); }
+        $dictPreview.textContent = "";
+      },
+      () => {
+        dictating = false;
+        $dictBtn.textContent = "🎤 Dictate";
+        $dictBtn.classList.remove("recording");
+        $dictPreview.hidden  = true;
+      }
+    );
+  });
 
   // Prompt suggestion (new entries only)
   if (isNew) {
@@ -393,8 +491,10 @@ async function renderChat($main) {
         </div>
       </div>
       <div class="chat-main">
-        <div class="chat-header" id="chat-header">
-          ${state.chatSession?.title ?? "Select or start a conversation"}
+        <div class="chat-header-bar">
+          <span id="chat-header">${state.chatSession?.title ?? "Select or start a conversation"}</span>
+          <button class="tts-toggle${voice.ttsEnabled ? " on" : ""}" id="tts-toggle"
+            title="Toggle voice response">${voice.ttsEnabled ? "🔊 Voice on" : "🔇 Voice off"}</button>
         </div>
         <div class="messages-area" id="messages-area">
           ${renderWelcome()}
@@ -402,6 +502,7 @@ async function renderChat($main) {
         <div class="chat-input-area">
           <textarea id="chat-input" class="chat-input" rows="1"
             placeholder="Ask about your journal…"></textarea>
+          <button class="btn-mic" id="mic-btn" title="${voice.supported ? "Voice input" : "Voice not supported (use Chrome)"}">🎤</button>
           <button class="btn btn-primary" id="send-btn">Send</button>
         </div>
       </div>
@@ -448,6 +549,53 @@ async function renderChat($main) {
     $ci.style.height = "auto";
     $ci.style.height = Math.min($ci.scrollHeight, 120) + "px";
   });
+
+  // TTS toggle
+  document.getElementById("tts-toggle").addEventListener("click", () => {
+    voice.ttsEnabled = !voice.ttsEnabled;
+    window.speechSynthesis?.cancel();
+    const $btn = document.getElementById("tts-toggle");
+    if ($btn) {
+      $btn.textContent = voice.ttsEnabled ? "🔊 Voice on" : "🔇 Voice off";
+      $btn.classList.toggle("on", voice.ttsEnabled);
+    }
+  });
+
+  // Mic button — listen, then auto-send on silence
+  const $mic = document.getElementById("mic-btn");
+  if (!voice.supported) {
+    $mic.style.opacity = "0.4";
+    $mic.style.cursor  = "not-allowed";
+  } else {
+    let micActive = false;
+    $mic.addEventListener("click", () => {
+      if (micActive) {
+        stopDictation();
+        micActive = false;
+        $mic.textContent = "🎤";
+        $mic.classList.remove("recording");
+        return;
+      }
+      micActive = true;
+      $mic.textContent = "⏹";
+      $mic.classList.add("recording");
+
+      startDictation(
+        (interim) => {
+          const $inp = document.getElementById("chat-input");
+          if ($inp) { $inp.value = interim; $inp.style.height = "auto"; $inp.style.height = Math.min($inp.scrollHeight, 120) + "px"; }
+        },
+        null,
+        () => {
+          micActive = false;
+          $mic.textContent = "🎤";
+          $mic.classList.remove("recording");
+          const val = document.getElementById("chat-input")?.value?.trim();
+          if (val) send();
+        }
+      );
+    });
+  }
 }
 
 function sessionHtml(s) {
@@ -556,6 +704,9 @@ async function streamMessage(message) {
     if ($send) $send.disabled = false;
     const $a = document.getElementById("messages-area");
     if ($a) $a.scrollTop = $a.scrollHeight;
+    if (assistantMsg.content && !assistantMsg.content.startsWith("Error:")) {
+      speak(assistantMsg.content);
+    }
   }
 }
 
