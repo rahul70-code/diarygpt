@@ -23,6 +23,32 @@ export async function analyzeEntry(text) {
   return JSON.parse(raw);
 }
 
+export async function generateText(systemPrompt, userMessage) {
+  const { model } = getConfig();
+  const client = getClient();
+  const response = await client.messages.create({
+    model,
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+  });
+  return response.content.find((b) => b.type === "text")?.text ?? "";
+}
+
+export async function streamWithSystemPrompt(systemPrompt, history, message, onDelta) {
+  const { model } = getConfig();
+  const client = getClient();
+  const stream = client.messages.stream({
+    model,
+    max_tokens: 2048,
+    system: systemPrompt,
+    messages: [...history, { role: "user", content: message }],
+  });
+  stream.on("text", onDelta);
+  const final = await stream.finalMessage();
+  return final.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+}
+
 export async function streamChat(history, message, context, onDelta) {
   const { model } = getConfig();
   const client = getClient();

@@ -98,6 +98,45 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx ON chat_messages (session_id);
 
 -- ---------------------------------------------------------------------------
+-- therapy_sessions
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS therapy_sessions (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT        NOT NULL DEFAULT 'New session',
+  flagged    BOOLEAN     NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS therapy_sessions_user_id_idx ON therapy_sessions (user_id);
+
+-- ---------------------------------------------------------------------------
+-- therapy_messages
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS therapy_messages (
+  id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id        UUID        NOT NULL REFERENCES therapy_sessions(id) ON DELETE CASCADE,
+  role              TEXT        NOT NULL CHECK (role IN ('user', 'assistant')),
+  content_encrypted TEXT        NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS therapy_messages_session_id_idx ON therapy_messages (session_id);
+
+-- ---------------------------------------------------------------------------
+-- mood_logs
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mood_logs (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  score          INTEGER     NOT NULL CHECK (score >= 1 AND score <= 10),
+  note_encrypted TEXT,
+  logged_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS mood_logs_user_id_idx ON mood_logs (user_id);
+
+-- ---------------------------------------------------------------------------
 -- app_config  (singleton row — LLM provider + model selection)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS app_config (

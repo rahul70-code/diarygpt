@@ -90,6 +90,45 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx ON chat_messages (session_id);
 
 -- ---------------------------------------------------------------------------
+-- therapy_sessions
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS therapy_sessions (
+  id         TEXT    PRIMARY KEY,
+  user_id    TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT    NOT NULL DEFAULT 'New session',
+  flagged    INTEGER NOT NULL DEFAULT 0,  -- 1 when crisis keywords detected
+  created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS therapy_sessions_user_id_idx ON therapy_sessions (user_id);
+
+-- ---------------------------------------------------------------------------
+-- therapy_messages
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS therapy_messages (
+  id                TEXT NOT NULL PRIMARY KEY,
+  session_id        TEXT NOT NULL REFERENCES therapy_sessions(id) ON DELETE CASCADE,
+  role              TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content_encrypted TEXT NOT NULL,
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS therapy_messages_session_id_idx ON therapy_messages (session_id);
+
+-- ---------------------------------------------------------------------------
+-- mood_logs
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mood_logs (
+  id             TEXT    PRIMARY KEY,
+  user_id        TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  score          INTEGER NOT NULL CHECK (score >= 1 AND score <= 10),
+  note_encrypted TEXT,
+  logged_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS mood_logs_user_id_idx ON mood_logs (user_id);
+
+-- ---------------------------------------------------------------------------
 -- app_config (singleton row)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS app_config (

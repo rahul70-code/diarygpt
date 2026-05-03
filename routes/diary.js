@@ -3,13 +3,13 @@ import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { Entries } from "../db/models/entries.js";
 import { Embeddings } from "../db/models/embeddings.js";
+import { Analysis } from "../db/models/analysis.js";
 import { analyzeEntry } from "../services/llm.js";
 import { generateEmbedding } from "../services/embedding.js";
 import { encrypt, decrypt } from "../services/encryption.js";
 
 const router = Router();
 
-/** Map DB row → friendly response shape, decrypting sensitive fields */
 function toResponse(row) {
   return {
     id: row.id,
@@ -21,7 +21,7 @@ function toResponse(row) {
   };
 }
 
-// GET /api/diary — list all entries
+// GET /api/diary — list all entries for the authenticated user
 router.get("/", async (req, res) => {
   try {
     const rows = await Entries.getAllByUser(req.user.id);
@@ -31,11 +31,12 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/diary/:id — get single entry
+// GET /api/diary/:id — get single entry (must belong to user)
 router.get("/:id", async (req, res) => {
   try {
     const row = await Entries.getById(req.params.id);
     if (!row) return res.status(404).json({ error: "Entry not found" });
+    if (row.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
     res.json(toResponse(row));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -48,7 +49,6 @@ router.post("/", async (req, res) => {
     const { title, body, writtenAt } = req.body;
     if (!body) return res.status(400).json({ error: "body is required" });
 
-    // Save entry first, then analyze in background so a missing API key doesn't block saving
     const entry = await Entries.create({
       id: uuidv4(),
       user_id: req.user.id,
@@ -58,9 +58,18 @@ router.post("/", async (req, res) => {
       written_at: writtenAt || new Date().toISOString(),
     });
 
-    // Analyze and embed in background — don't crash on AI/embed failures
     analyzeEntry(body)
-      .then((analysis) => console.log("[analyze] entry", entry.id, analysis))
+      .then((analysis) =>
+        Analysis.create({
+          id: uuidv4(),
+          entry_id: entry.id,
+          mood: analysis.mood,
+          themes: analysis.themes,
+          reflection_encrypted: encrypt(analysis.reflection || ""),
+          follow_up_question: analysis.followUpQuestion,
+        })
+      )
+      .then(() => console.log("[analyze] saved for entry", entry.id))
       .catch((err) => console.error("[analyze] failed for entry", entry.id, err.message));
 
     generateEmbedding(body)
@@ -83,16 +92,22 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PATCH /api/diary/:id — update entry
+// PATCH /api/diary/:id — update entry (must belong to user)
 router.patch("/:id", async (req, res) => {
   try {
-    const { title, body } = req.body;
+    const row = await Entries.getById(req.params.id);
+    if (!row) return res.status(404).json({ error: "Entry not found" });
+    if (row.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+
+    const { title, body, writtenAt } = req.body;
     const updates = {};
     if (title !== undefined) updates.title_encrypted = encrypt(title);
     if (body !== undefined) {
       updates.body_encrypted = encrypt(body);
       updates.content_hash = createHash("sha256").update(body).digest("hex");
     }
+    if (writtenAt !== undefined) updates.written_at = writtenAt;
+
     const rows = await Entries.updateById(req.params.id, updates);
     const updated = Array.isArray(rows) ? rows[0] : rows;
     if (!updated) return res.status(404).json({ error: "Entry not found" });
@@ -102,9 +117,13 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-// DELETE /api/diary/:id — delete entry (cascades to embeddings)
+// DELETE /api/diary/:id — delete entry (must belong to user)
 router.delete("/:id", async (req, res) => {
   try {
+    const row = await Entries.getById(req.params.id);
+    if (!row) return res.status(404).json({ error: "Entry not found" });
+    if (row.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+
     const rows = await Entries.deleteById(req.params.id);
     if (!rows || (Array.isArray(rows) && rows.length === 0))
       return res.status(404).json({ error: "Entry not found" });
