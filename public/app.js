@@ -139,6 +139,7 @@ async function dispatch() {
 
   ensureShell($app);
   updateNav(r);
+  refreshPrivacyBadge();
 
   const $main = document.getElementById("main");
   if (r === "/diary" || r === "/")     return renderDiaryList($main);
@@ -148,6 +149,7 @@ async function dispatch() {
   if (r === "/therapy")                return renderTherapy($main);
   if (r === "/search")                 return renderSearch($main);
   if (r === "/insights")               return renderInsights($main);
+  if (r === "/settings")               return renderSettings($main);
 }
 
 window.addEventListener("hashchange", dispatch);
@@ -166,8 +168,10 @@ function ensureShell($app) {
           <a href="#/chat"     class="nav-link" data-r="/chat">💬 Chat</a>
           <a href="#/therapy"  class="nav-link" data-r="/therapy">🧘 Therapy</a>
           <a href="#/search"   class="nav-link" data-r="/search">🔍 Search</a>
+          <a href="#/settings" class="nav-link" data-r="/settings">⚙️ Settings</a>
         </nav>
         <div class="sidebar-footer">
+          <div id="privacy-badge" class="privacy-badge"></div>
           <div class="user-email">${esc(state.user?.email)}</div>
           <button class="logout-btn" onclick="doLogout()">Sign out</button>
         </div>
@@ -350,6 +354,30 @@ async function renderEntryForm($main, id) {
         <button class="btn btn-ghost btn-sm" id="dictate-btn">🎤 Dictate</button>
         <span id="dictate-preview" class="dictate-preview" hidden></span>
       </div>
+      ${!isNew && entry?.analysis ? `
+      <div class="analysis-card">
+        <div class="analysis-mood">
+          <span class="analysis-label">Mood</span>
+          <span class="analysis-mood-value">${esc(entry.analysis.mood)}</span>
+          ${entry.analysis.themes?.length ? `<span class="analysis-themes">${entry.analysis.themes.map(t => `<span class="theme-tag">${esc(t)}</span>`).join("")}</span>` : ""}
+        </div>
+        ${entry.analysis.followUpQuestion ? `
+        <div class="analysis-followup">
+          <span class="analysis-label">Reflect on this</span>
+          <p class="analysis-question">${esc(entry.analysis.followUpQuestion)}</p>
+        </div>` : ""}
+      </div>` : ""}
+      ${!isNew ? `
+      <div class="entry-chat" id="entry-chat">
+        <button class="btn btn-ghost btn-sm entry-chat-toggle" id="entry-chat-toggle">💬 Chat about this entry</button>
+        <div class="entry-chat-body" id="entry-chat-body" hidden>
+          <div class="entry-chat-messages" id="entry-chat-messages"></div>
+          <div class="entry-chat-input-row">
+            <textarea id="entry-chat-input" class="entry-chat-input" rows="1" placeholder="Ask something about this entry…"></textarea>
+            <button class="btn btn-primary btn-sm" id="entry-chat-send">Send</button>
+          </div>
+        </div>
+      </div>` : ""}
     </div>`;
 
   // Auto-grow textarea
@@ -471,6 +499,62 @@ async function renderEntryForm($main, id) {
       if (!confirm("Delete this entry? This cannot be undone.")) return;
       const res = await api(`/api/diary/${id}`, { method: "DELETE" });
       if (res?.success) nav("/diary");
+    });
+
+    // ── Entry chat ──────────────────────────────────────────────────────────
+    let entryChatSessionId = null;
+
+    document.getElementById("entry-chat-toggle").addEventListener("click", () => {
+      const $body = document.getElementById("entry-chat-body");
+      $body.hidden = !$body.hidden;
+      if (!$body.hidden) document.getElementById("entry-chat-input").focus();
+    });
+
+    const sendEntryMessage = async () => {
+      const $input = document.getElementById("entry-chat-input");
+      const message = $input.value.trim();
+      if (!message) return;
+      $input.value = "";
+      $input.style.height = "auto";
+
+      const $msgs = document.getElementById("entry-chat-messages");
+      $msgs.insertAdjacentHTML("beforeend",
+        `<div class="echat-msg echat-user">${esc(message)}</div>`);
+      const $ai = document.createElement("div");
+      $ai.className = "echat-msg echat-ai";
+      $ai.textContent = "…";
+      $msgs.appendChild($ai);
+      $msgs.scrollTop = $msgs.scrollHeight;
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.token}` },
+        body: JSON.stringify({ message, entryId: id, sessionId: entryChatSessionId }),
+      });
+
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "", fullText = "";
+      $ai.textContent = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const evt = JSON.parse(line.slice(5).trim());
+          if (evt.delta) { fullText += evt.delta; $ai.textContent = fullText; }
+          if (evt.sessionId) entryChatSessionId = evt.sessionId;
+        }
+      }
+      $msgs.scrollTop = $msgs.scrollHeight;
+    };
+
+    document.getElementById("entry-chat-send").addEventListener("click", sendEntryMessage);
+    document.getElementById("entry-chat-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendEntryMessage(); }
     });
   }
 }
@@ -1146,6 +1230,125 @@ function renderSearch($main) {
   document.getElementById("search-btn").addEventListener("click", doSearch);
   document.getElementById("search-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") doSearch();
+  });
+}
+
+// ─── Privacy badge ────────────────────────────────────────────────────────────
+async function refreshPrivacyBadge() {
+  const $badge = document.getElementById("privacy-badge");
+  if (!$badge) return;
+  try {
+    const cfg = await api("/api/config");
+    if (!cfg) return;
+    const isLocal = cfg.active.privacy === "local";
+    $badge.className = `privacy-badge ${isLocal ? "privacy-local" : "privacy-cloud"}`;
+    $badge.textContent = isLocal ? "🟢 Local — fully private" : "🟡 Cloud — " + cfg.active.provider;
+  } catch { /* non-fatal */ }
+}
+
+// ─── Settings view ────────────────────────────────────────────────────────────
+async function renderSettings($main) {
+  $main.innerHTML = '<div class="loader">Loading…</div>';
+
+  const cfg = await api("/api/config");
+  if (!cfg) return;
+
+  const { active, available, privacyTiers } = cfg;
+  const localProviders = Object.entries(privacyTiers).filter(([, t]) => t === "local").map(([p]) => p);
+  const cloudProviders = Object.entries(privacyTiers).filter(([, t]) => t === "cloud").map(([p]) => p);
+
+  const modelOptions = (provider) =>
+    (available[provider] || []).map((m) => `<option value="${m}" ${m === active.model && provider === active.provider ? "selected" : ""}>${m}</option>`).join("");
+
+  const providerCard = (p, tier) => {
+    const isActive = active.provider === p;
+    return `
+    <label class="provider-card ${isActive ? "provider-card--active" : ""}" data-provider="${p}">
+      <input type="radio" name="provider" value="${p}" ${isActive ? "checked" : ""} style="display:none">
+      <div class="provider-card-header">
+        <span class="provider-name">${p}</span>
+        <span class="provider-tier ${tier === "local" ? "tier-local" : "tier-cloud"}">${tier === "local" ? "🟢 Local" : "🟡 Cloud"}</span>
+      </div>
+      <div class="provider-models" id="models-${p}" style="${isActive ? "" : "display:none"}">
+        <select class="input" id="model-select-${p}">${modelOptions(p)}</select>
+      </div>
+    </label>`;
+  };
+
+  $main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Settings</h1>
+        <p class="page-sub">Choose how DairyGPT thinks — and who sees your data</p>
+      </div>
+    </div>
+    <div style="padding:20px 32px 48px;max-width:860px">
+
+    <div class="settings-section">
+      <h2 class="settings-heading">🟢 Local Mode <span class="settings-badge settings-badge--local">Zero data leaves your machine</span></h2>
+      <p class="settings-desc">Uses Ollama running locally. No API key needed. Your diary never leaves your device.</p>
+      <div class="provider-grid">
+        ${localProviders.map((p) => providerCard(p, "local")).join("")}
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2 class="settings-heading">🟡 Cloud Mode <span class="settings-badge settings-badge--cloud">Opt-in · Bring your own key</span></h2>
+      <p class="settings-desc">Higher reasoning quality. Your diary context is sent to the provider's API during active requests.</p>
+      <div class="provider-grid">
+        ${cloudProviders.map((p) => providerCard(p, "cloud")).join("")}
+      </div>
+      <div class="api-key-wrap" id="api-key-wrap" style="${localProviders.includes(active.provider) ? "display:none" : ""}">
+        <label class="label">API Key for <span id="api-key-provider">${active.provider}</span></label>
+        <input type="password" class="input" id="api-key-input"
+          placeholder="${active.hasCustomKey ? "Key saved — enter new to replace" : "Paste your API key here"}"
+          autocomplete="off">
+        <p class="settings-hint">Stored locally on this server. Never sent to any other service.</p>
+      </div>
+    </div>
+
+    <div id="settings-status" class="settings-status" hidden></div>
+    <button class="btn btn-primary" id="settings-save">Save settings</button>
+    </div>`;
+
+  // ── interaction: highlight selected card, show its models ──
+  $main.querySelectorAll('input[name="provider"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const selected = radio.value;
+      $main.querySelectorAll(".provider-card").forEach((card) => {
+        const p = card.dataset.provider;
+        card.classList.toggle("provider-card--active", p === selected);
+        card.querySelector(".provider-models").style.display = p === selected ? "" : "none";
+      });
+      const isCloud = !localProviders.includes(selected);
+      document.getElementById("api-key-wrap").style.display = isCloud ? "" : "none";
+      document.getElementById("api-key-provider").textContent = selected;
+    });
+  });
+
+  document.getElementById("settings-save").addEventListener("click", async () => {
+    const selectedProvider = $main.querySelector('input[name="provider"]:checked')?.value;
+    if (!selectedProvider) return;
+
+    const selectedModel = document.getElementById(`model-select-${selectedProvider}`)?.value;
+    const apiKeyInput   = document.getElementById("api-key-input")?.value.trim();
+    const $status       = document.getElementById("settings-status");
+
+    const body = { provider: selectedProvider, model: selectedModel };
+    if (apiKeyInput) body.apiKey = apiKeyInput;
+
+    const result = await api("/api/config", { method: "POST", body });
+    $status.hidden = false;
+    if (!result) {
+      $status.className = "settings-status settings-status--error";
+      $status.textContent = "Failed to save settings.";
+    } else {
+      $status.className = "settings-status settings-status--ok";
+      $status.textContent = result.privacy === "local"
+        ? "✓ Saved — running fully local. Zero data leaves your machine."
+        : `✓ Saved — using ${result.provider} (${result.model}).`;
+      refreshPrivacyBadge();
+    }
   });
 }
 
