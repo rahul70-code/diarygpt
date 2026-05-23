@@ -1,30 +1,47 @@
 # DairyGPT
 
-An AI-powered personal journal with voice, emotional insights, and memory across time.
+An AI-powered personal journal with voice, emotional insights, therapy, and memory across time.
 
 Write entries by typing or speaking. The AI analyzes your mood, surfaces patterns across months of writing, generates personalized prompts, and holds reflective conversations grounded in your actual diary — not generic advice.
 
-Runs entirely on your machine (SQLite + local Ollama). Optional cloud sync via PostgreSQL. Supports **Anthropic Claude**, **OpenAI GPT**, and **Google Gemini** — switch at runtime.
+**Runs entirely on your machine by default.** Ollama powers both embeddings and chat locally — zero data leaves your device. Cloud providers (Groq, OpenAI, Anthropic, Gemini) are available as an opt-in with your own API key.
 
 ---
 
-## What's Inside
+## Privacy Model
+
+DairyGPT has two modes, switchable at runtime from **⚙️ Settings**:
+
+| | 🟢 Local Mode (default) | 🟡 Cloud Mode (opt-in) |
+|---|---|---|
+| **LLM** | Ollama on your machine | Groq / OpenAI / Anthropic / Gemini |
+| **Embeddings** | Ollama `nomic-embed-text` | Ollama (stays local even in cloud mode) |
+| **Vector search** | SQLite-vec / pgvector — on your server | SQLite-vec / pgvector — on your server |
+| **Data sent externally** | Nothing | Top 5 diary excerpts per chat message |
+| **API key required** | No | Yes — your own key, stored locally |
+
+Embeddings and cosine similarity **always** run locally regardless of mode. In cloud mode, only the most relevant diary excerpts transit to the provider — never your full diary.
+
+---
+
+## Features
 
 | Feature | How it works |
 |---|---|
-| **Multi-user auth** | JWT + Argon2 password hashing. Every user's data is isolated. |
+| **Multi-user auth** | JWT + Argon2id password hashing. Every user's data is isolated. |
 | **Web UI** | Vanilla JS SPA served by Express — no build step, works out of the box |
-| **AI mood analysis** | Every entry is analyzed for mood, themes, and a reflective follow-up question |
+| **AI mood analysis** | Every entry analyzed for mood, themes, a reflection, and a follow-up question |
 | **RAG-powered chat** | Embeds your question, finds the 5 most semantically relevant diary chunks via cosine similarity, grounds the AI response in your actual entries |
 | **Persistent chat sessions** | Conversations saved to DB, resumable across page refreshes |
-| **Semantic search** | Find entries by meaning, not keywords |
+| **Semantic search** | Find entries by meaning, not keywords — "times I felt lonely" matches "isolated", "disconnected", "blue" |
 | **Insights dashboard** | Mood distribution chart, writing streak, "on this day" memories |
 | **Weekly reflection** | AI summary of the week's emotional arc and themes |
-| **AI journaling prompts** | Personalized "what to write about" suggestions based on recent entries |
+| **AI journaling prompts** | Personalized suggestions based on patterns in your recent writing |
 | **Voice dictation** | Speak a diary entry — browser transcribes it into the text area |
 | **Voice chat** | Ask the AI a question out loud, hear the response read back |
-| **AI therapy companion** | Structured emotional support using CBT/DBT techniques, with crisis detection and hardcoded safety resources |
+| **AI therapy companion** | Structured emotional support using CBT/DBT techniques, with hardcoded crisis detection |
 | **Mood check-ins** | 1–10 mood logging before therapy sessions, history chart |
+| **Privacy settings** | Switch between fully local (Ollama) and cloud providers at runtime |
 | **Encryption at rest** | AES-256-GCM on all diary, chat, and therapy content |
 | **Dual storage** | SQLite locally (default) or PostgreSQL for multi-device sync |
 
@@ -38,7 +55,21 @@ Runs entirely on your machine (SQLite + local Ollama). Optional cloud sync via P
 npm install
 ```
 
-### 2. Configure environment
+### 2. Pull Ollama models (local mode — recommended)
+
+```bash
+# Chat / analysis model — pick one:
+ollama pull llama3.2          # 2GB  — fast, good quality
+ollama pull llama3.1:8b       # 5GB  — better quality
+ollama pull qwen2.5:7b        # 5GB  — excellent quality for its size
+
+# Embedding model — required for RAG and search:
+ollama pull nomic-embed-text
+```
+
+Don't have Ollama? Install it from [ollama.com](https://ollama.com) — takes under two minutes.
+
+### 3. Configure environment
 
 ```bash
 cp .env.example .env
@@ -49,41 +80,37 @@ Edit `.env`:
 ```env
 PORT=3000
 
-# Required: 64 hex chars (32 bytes) — encrypt all diary content at rest
+# Required — encrypt all content at rest (64 hex chars = 32 bytes)
 # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ENCRYPTION_KEY=your_64_hex_char_key_here
 
-# Required: any long random string — signs JWT tokens
-# Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# Required — signs JWT tokens
 JWT_SECRET=your_jwt_secret_here
 
-# Storage — 'local' (SQLite, default) or 'cloud' (PostgreSQL)
+# Storage: 'local' (SQLite, default) or 'cloud' (PostgreSQL)
 STORAGE_MODE=local
 
-# Embedding provider — 'ollama' (local, default) or 'openai'
+# Embedding provider: 'ollama' (default, local) or 'openai' / 'jina' / 'gemini'
 EMBEDDING_PROVIDER=ollama
 
-# LLM providers — only the ones you use need keys
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=AIza...
+# Ollama URL (if not running on default port)
+# OLLAMA_URL=http://localhost:11434
 
-# Cloud mode only
+# Cloud LLM providers — only needed if you opt into cloud mode via Settings
+# GROQ_API_KEY=gsk_...
+# OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
+# GEMINI_API_KEY=AIza...
+# MISTRAL_API_KEY=...
+
+# PostgreSQL (cloud storage only)
 # DATABASE_URL=postgresql://user:password@localhost:5432/dairygpt
 ```
-
-### 3. Set up embeddings (local mode)
-
-```bash
-ollama pull nomic-embed-text
-```
-
-Or switch to OpenAI embeddings by setting `EMBEDDING_PROVIDER=openai` (uses `text-embedding-3-small`).
 
 ### 4. Start
 
 ```bash
-npm run dev     # development — auto-restarts
+npm run dev     # development — auto-restarts on changes
 npm start       # production
 ```
 
@@ -99,9 +126,9 @@ The first screen is a login/register form. Create an account — all diary data 
 
 ### Write an entry
 
-Go to **📓 Diary → + New entry**. Type or click **🎤 Dictate** to speak your entry. The AI analyzes mood and themes in the background (requires an LLM API key).
+Go to **📓 Diary → + New entry**. Type or click **🎤 Dictate** to speak your entry. The AI analyzes mood and themes in the background.
 
-Use **✨ Suggest a prompt** to get a personalized journaling question based on your recent writing.
+Use **✨ Suggest a prompt** to get a personalized journaling question based on your recent writing patterns.
 
 ### Chat with your journal
 
@@ -119,81 +146,80 @@ Go to **✨ Insights** for:
 
 ### Therapy companion
 
-Go to **🧘 Therapy** for structured emotional support sessions. The AI uses CBT thought-reframing, DBT skills, and reflective listening — not generic advice.
+Go to **🧘 Therapy** for structured emotional support. The AI uses CBT thought-reframing, DBT skills, and reflective listening.
 
 - Rate your mood (1–10) at the start of each session
 - Sessions are saved and resumable — the AI remembers what you discussed
 - Voice input and voice responses work here too
 
-**Important:** A disclosure banner is always visible: *"This is an AI companion, not a licensed therapist."* If crisis language is detected in any message, the LLM is bypassed entirely and hardcoded crisis resources are shown (988, Crisis Text Line, findahelpline.com).
+**Important:** A disclosure banner is always visible: *"This is an AI companion, not a licensed therapist."* If crisis language is detected in any message, the LLM is bypassed entirely and hardcoded crisis resources are shown (988 Lifeline, Crisis Text Line, findahelpline.com).
 
 ### Semantic search
 
 Go to **🔍 Search**. Search by meaning: "times I felt overwhelmed", "moments of gratitude", "conflicts at work".
 
----
+### Settings
 
-## Voice Features
-
-Voice uses the **browser's built-in Speech APIs** — free, no API key needed.
-
-| Feature | Where | How |
-|---|---|---|
-| Voice dictation | New/edit entry | Click **🎤 Dictate**, speak, click **⏹ Stop** |
-| Voice chat input | Chat | Click the **🎤** button next to Send |
-| AI voice response | Chat | Toggle **🔊 Voice on/off** in the chat header |
-
-**Premium voice quality** (requires OpenAI key):
-
-| Endpoint | Description |
-|---|---|
-| `POST /api/voice/transcribe` | Sends audio blob to Whisper (`whisper-1`) — more accurate, handles accents |
-| `POST /api/voice/speak` | Returns MP3 from OpenAI TTS (`tts-1`, voice `nova` by default) — natural voice |
-
-Browser voice works on Chrome and Edge. Firefox has limited `SpeechRecognition` support.
+Go to **⚙️ Settings** to switch between local and cloud mode, pick an AI model, and enter an API key. The privacy badge in the sidebar updates immediately.
 
 ---
 
 ## How RAG Works
 
 ```
-User message → embed → cosine similarity search over all entry chunks
-      ↓
-Top-5 most semantically relevant diary chunks (not just recent)
-      ↓
-Decrypted in memory → injected as exclusive context into LLM
-      ↓
-AI responds grounded in your actual entries — no hallucination
+WRITE (once per entry)
+──────────────────────
+Entry text
+    → Ollama nomic-embed-text → [0.21, 0.83, ...] (768 numbers)
+    → Embedding saved to DB (raw — math requires it)
+    → Entry text saved to DB (AES-256-GCM encrypted)
+    → LLM analyzes mood/themes async (encrypted result saved)
+
+ASK (every chat message)
+────────────────────────
+Your question
+    → Ollama nomic-embed-text → question vector
+    → Cosine similarity against all your entry vectors (runs in DB, locally)
+    → Top 5 most relevant entries selected
+    → Decrypted in memory → injected into LLM system prompt
+    → LLM streams answer grounded in your actual entries
 ```
 
-Embeddings are generated async when an entry is saved (non-blocking). Both Ollama and OpenAI embeddings are stored as Float32 BLOBs (SQLite) or VECTOR columns (PostgreSQL).
+Embeddings run async and non-blocking — entries save instantly regardless. Both SQLite (`sqlite-vec`) and PostgreSQL (`pgvector`) handle cosine similarity locally without any external service.
 
 ---
 
 ## Architecture
 
 ```
-Browser (Vanilla JS SPA)
-      ↕ fetch + EventSource
+Browser (Vanilla JS SPA — no build step)
+      ↕ fetch + ReadableStream (SSE streaming)
 Express API (index.js)
-    ├── /api/auth        → register, login (JWT)
+    ├── /api/auth        → register, login (JWT + Argon2id)
     ├── /api/diary       → CRUD + async analysis & embedding
     ├── /api/chat        → sessions, messages, RAG + LLM streaming
     ├── /api/search      → semantic search
     ├── /api/insights    → mood data, weekly summary, journaling prompt
     ├── /api/voice       → Whisper transcription, OpenAI TTS
-    ├── /api/therapy     → therapy sessions, messages, mood logs
-    └── /api/config      → switch LLM provider / model
+    ├── /api/therapy     → therapy sessions, crisis gate, mood logs
+    └── /api/config      → switch LLM provider / model at runtime
 
 Service Layer
-    ├── llm.js           → analyzeEntry, generateText, streamChat, streamWithSystemPrompt
-    ├── embedding.js     → Ollama or OpenAI embeddings
+    ├── llm.js           → dynamic provider factory (reads config on every call)
+    ├── embedding.js     → Ollama / OpenAI / Jina / Gemini embeddings
     ├── encryption.js    → AES-256-GCM encrypt/decrypt
-    └── providers/       → anthropic.js, openai.js, gemini.js
+    ├── prompts.js       → all system prompts
+    └── providers/
+        ├── ollama.js    → local inference via Ollama OpenAI-compatible API
+        ├── groq.js      → Groq (llama-3.3-70b, fastest cloud inference)
+        ├── anthropic.js → Claude (adaptive thinking)
+        ├── openai.js    → GPT (streaming + JSON mode)
+        ├── gemini.js    → Gemini (stream + JSON mime)
+        └── mistral.js   → Mistral
 
 Storage
-    ├── SQLite  + sqlite-vec  (local default)
-    └── PostgreSQL + pgvector  (cloud / multi-device)
+    ├── SQLite  + sqlite-vec  (local default — single file, zero config)
+    └── PostgreSQL + pgvector  (cloud / multi-device sync)
 ```
 
 ---
@@ -213,24 +239,27 @@ DairyGPT/
 │   ├── insights.js           # Mood dashboard, weekly summary, prompt
 │   ├── voice.js              # Whisper transcription, OpenAI TTS
 │   ├── therapy.js            # Therapy sessions, crisis gate, mood logs
-│   └── config.js             # Provider / model config
+│   └── config.js             # Provider / model / privacy config
 ├── services/
-│   ├── llm.js                # Provider factory
-│   ├── embedding.js          # Embedding generation
+│   ├── llm.js                # Dynamic provider factory
+│   ├── embedding.js          # Embedding generation (multi-provider)
 │   ├── encryption.js         # AES-256-GCM
-│   ├── prompts.js            # System prompts (chat, analysis, weekly, prompt)
+│   ├── prompts.js            # All system prompts
 │   └── providers/
-│       ├── anthropic.js      # Claude (adaptive thinking + generateText)
-│       ├── openai.js         # GPT (streaming + json_object + generateText)
-│       └── gemini.js         # Gemini (stream + json mime + generateText)
+│       ├── ollama.js         # Local — Ollama OpenAI-compatible endpoint
+│       ├── groq.js           # Cloud — Groq (llama-3.3-70b)
+│       ├── anthropic.js      # Cloud — Claude (adaptive thinking)
+│       ├── openai.js         # Cloud — GPT
+│       ├── gemini.js         # Cloud — Gemini
+│       └── mistral.js        # Cloud — Mistral
 ├── db/
 │   ├── adapter.js            # Routes to SQLite or PostgreSQL
 │   ├── helpers.js            # Re-exports CRUD helpers
 │   ├── sqlite-schema.sql     # SQLite schema
 │   ├── schema.sql            # PostgreSQL schema
 │   ├── adapters/
-│   │   ├── sqlite.js         # ? params, vec_distance_cosine
-│   │   └── postgres.js       # $N params, pgvector <=> search
+│   │   ├── sqlite.js         # ? placeholders, sqlite-vec cosine search
+│   │   └── postgres.js       # $N placeholders, pgvector <=> search
 │   └── models/
 │       ├── users.js
 │       ├── entries.js
@@ -238,6 +267,9 @@ DairyGPT/
 │       ├── analysis.js
 │       ├── chatSessions.js
 │       ├── chatMessages.js
+│       ├── therapySessions.js
+│       ├── therapyMessages.js
+│       ├── moodLogs.js
 │       ├── insights.js       # Adapter-aware complex queries (mood, streak, memories)
 │       └── config.js
 ├── public/                   # Frontend SPA (served by Express)
@@ -245,7 +277,7 @@ DairyGPT/
 │   ├── style.css
 │   └── app.js
 └── storage/
-    └── configStore.js        # LLM provider config (JSON file)
+    └── configStore.js        # LLM provider + privacy config (JSON file)
 ```
 
 ---
@@ -287,7 +319,7 @@ curl -X POST http://localhost:3000/api/auth/register \
 curl -X POST http://localhost:3000/api/diary \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{ "title": "Monday", "body": "Rough day, but the evening walk helped.", "writtenAt": "2026-03-21" }'
+  -d '{ "title": "Monday", "body": "Rough day, but the evening walk helped.", "writtenAt": "2026-05-23" }'
 ```
 
 ---
@@ -306,14 +338,14 @@ curl -X POST http://localhost:3000/api/diary \
 { "message": "What patterns do you see in my stress?", "sessionId": "optional-uuid" }
 ```
 
-**SSE response stream:**
+**SSE stream:**
 ```
 data: {"delta": "Looking at your entries, "}
 data: {"delta": "I notice a recurring pattern around..."}
 data: {"done": true, "text": "...", "sessionId": "uuid"}
 ```
 
-The `sessionId` in the `done` event is used to continue the conversation on the next message.
+Pass the `sessionId` from the `done` event on the next message to continue the conversation.
 
 ---
 
@@ -351,12 +383,28 @@ Response includes `score` (0–1 cosine similarity) for each result.
 
 ---
 
-### Voice (Premium — requires OpenAI key)
+### Therapy
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/therapy/session` | Start or continue a therapy session (SSE streaming) |
+| `GET` | `/api/therapy/sessions` | List past sessions with mood scores |
+| `GET` | `/api/therapy/sessions/:id/messages` | Get messages in a session |
+| `POST` | `/api/therapy/mood` | Log a mood check-in (score 1–10) |
+| `GET` | `/api/therapy/mood/history` | Mood scores over time |
+
+Crisis language is detected server-side before any LLM call. If triggered, a hardcoded safe response is returned — the LLM is never invoked.
+
+---
+
+### Voice
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/voice/transcribe` | `multipart/form-data` with `audio` file → `{ text }` via Whisper |
 | `POST` | `/api/voice/speak` | `{ text, voice? }` → MP3 stream via OpenAI TTS |
+
+Requires `OPENAI_API_KEY`. Browser `SpeechRecognition` is used as the free fallback (Chrome/Edge).
 
 Available TTS voices: `alloy`, `echo`, `fable`, `nova` (default), `onyx`, `shimmer`.
 
@@ -366,57 +414,94 @@ Available TTS voices: `alloy`, `echo`, `fable`, `nova` (default), `onyx`, `shimm
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/config` | Active provider/model + all available options |
-| `POST` | `/api/config` | Switch provider, model, or API key |
+| `GET` | `/api/config` | Active provider, model, privacy tier + all available options |
+| `POST` | `/api/config` | Switch provider, model, or set API key |
 
 ```bash
+# Switch to local Ollama (default)
 curl -X POST http://localhost:3000/api/config \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{ "provider": "openai", "model": "gpt-4o" }'
+  -d '{ "provider": "ollama", "model": "qwen2.5:7b" }'
+
+# Opt into Groq (cloud)
+curl -X POST http://localhost:3000/api/config \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{ "provider": "groq", "model": "llama-3.3-70b-versatile", "apiKey": "gsk_..." }'
+```
+
+**GET response:**
+```json
+{
+  "active": {
+    "provider": "ollama",
+    "model": "llama3.2",
+    "hasCustomKey": false,
+    "privacy": "local"
+  },
+  "available": { "ollama": [...], "groq": [...], "openai": [...] },
+  "privacyTiers": { "ollama": "local", "groq": "cloud", "openai": "cloud" }
+}
 ```
 
 ---
 
-## Available Models
+## Available LLM Models
 
-| Provider | Models |
-|---|---|
-| `anthropic` | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` |
-| `openai` | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-3.5-turbo` |
-| `gemini` | `gemini-2.0-flash`, `gemini-1.5-pro`, `gemini-1.5-flash` |
+| Provider | Privacy | Models |
+|---|---|---|
+| `ollama` | 🟢 Local | `llama3.2`, `llama3.1:8b`, `mistral:7b`, `qwen2.5:7b`, `phi4:14b` |
+| `groq` | 🟡 Cloud | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768` |
+| `anthropic` | 🟡 Cloud | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` |
+| `openai` | 🟡 Cloud | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo` |
+| `gemini` | 🟡 Cloud | `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-pro` |
 
-Default: `claude-sonnet-4-6`. Switch at runtime — no restart needed.
+Default: `ollama` / `llama3.2`. Switch at runtime via Settings — no restart needed.
 
 ---
 
 ## Embedding Models
 
-| Mode | Model | Dims | Cost |
+| Provider | Model | Dims | Privacy |
 |---|---|---|---|
-| Ollama (default) | `nomic-embed-text` | 768 | Free, local |
-| OpenAI | `text-embedding-3-small` | 1536 | ~$0.02 / 1M tokens |
+| `ollama` (default) | `nomic-embed-text` | 768 | 🟢 Local — free, no API key |
+| `jina` | `jina-embeddings-v3` | 1024 | 🟡 Cloud — 1M tokens/month free |
+| `gemini` | `text-embedding-004` | 768 | 🟡 Cloud — free tier |
+| `openai` | `text-embedding-3-small` | 1536 | 🟡 Cloud — ~$0.02 / 1M tokens |
 
-Default is Ollama — no data leaves the machine. Switching models requires re-embedding existing entries.
+Set via `EMBEDDING_PROVIDER` env var. Switching models requires re-embedding existing entries.
 
 ---
 
 ## Security
 
-- **Passwords** — hashed with Argon2id before storage
+- **Passwords** — hashed with Argon2id before storage, never stored in plaintext
 - **JWT tokens** — signed with `JWT_SECRET`, expire after 30 days
-- **Diary & chat content** — AES-256-GCM encrypted at rest; decrypted only in memory at request time
-- **Embeddings** — vectors are stored unencrypted (required for cosine similarity); chunk text is encrypted separately
-- **Data isolation** — all diary and chat queries are scoped to the authenticated user's ID
+- **All user content** — AES-256-GCM encrypted at rest; decrypted only in memory at request time
+- **Embeddings** — vectors stored unencrypted (required for cosine similarity); chunk text encrypted separately
+- **API keys** — stored in a local JSON file on your server, never transmitted externally
+- **Data isolation** — every query is scoped to the authenticated user's ID; no cross-user data access
 
 ---
 
 ## Adding a New LLM Provider
 
 1. Create `services/providers/yourprovider.js` implementing:
-   ```js
-   export async function analyzeEntry(text) { ... }        // returns { mood, themes, reflection, followUpQuestion }
-   export async function generateText(systemPrompt, msg) { ... } // returns string
-   export async function streamChat(history, message, context, onDelta) { ... } // returns full string
-   ```
-2. Register it in `services/llm.js` and add its models to `storage/configStore.js` (`PROVIDER_MODELS`).
+
+```js
+export async function analyzeEntry(text) { ... }
+// returns { mood, themes, reflection, followUpQuestion }
+
+export async function generateText(systemPrompt, userMessage) { ... }
+// returns string
+
+export async function streamChat(history, message, context, onDelta) { ... }
+// calls onDelta(chunk) for each token, returns full string
+
+export async function streamWithSystemPrompt(systemPrompt, history, message, onDelta) { ... }
+// same as streamChat but with a custom system prompt
+```
+
+2. Import it in `services/llm.js` and add it to the `PROVIDERS` map.
+3. Add its models and privacy tier to `storage/configStore.js` (`PROVIDER_MODELS`, `PROVIDER_PRIVACY`).

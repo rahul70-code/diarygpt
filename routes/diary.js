@@ -5,6 +5,20 @@ import { Entries } from "../db/models/entries.js";
 import { Embeddings } from "../db/models/embeddings.js";
 import { Analysis } from "../db/models/analysis.js";
 import { analyzeEntry } from "../services/llm.js";
+
+async function retryAnalyze(text, attempts) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await analyzeEntry(text);
+    } catch (err) {
+      const is429 = err.message?.includes("429") || err.status === 429;
+      if (!is429 || i === attempts - 1) throw err;
+      const wait = (i + 1) * 8000;
+      console.warn(`[analyze] 429 rate limit, retrying in ${wait / 1000}s…`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
 import { generateEmbedding } from "../services/embedding.js";
 import { encrypt, decrypt } from "../services/encryption.js";
 
@@ -37,7 +51,17 @@ router.get("/:id", async (req, res) => {
     const row = await Entries.getById(req.params.id);
     if (!row) return res.status(404).json({ error: "Entry not found" });
     if (row.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
-    res.json(toResponse(row));
+
+    const analysis = await Analysis.getByEntry(row.id);
+    res.json({
+      ...toResponse(row),
+      analysis: analysis ? {
+        mood: analysis.mood,
+        themes: analysis.themes ? JSON.parse(analysis.themes) : [],
+        reflection: analysis.reflection_encrypted ? decrypt(analysis.reflection_encrypted) : null,
+        followUpQuestion: analysis.follow_up_question,
+      } : null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -58,7 +82,7 @@ router.post("/", async (req, res) => {
       written_at: writtenAt || new Date().toISOString(),
     });
 
-    analyzeEntry(body)
+    retryAnalyze(body, 3)
       .then((analysis) =>
         Analysis.create({
           id: uuidv4(),

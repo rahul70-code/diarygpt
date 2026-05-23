@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { Embeddings } from "../db/models/embeddings.js";
+import { Entries } from "../db/models/entries.js";
 import { ChatSessions } from "../db/models/chatSessions.js";
 import { ChatMessages } from "../db/models/chatMessages.js";
 import { generateEmbedding } from "../services/embedding.js";
-import { streamChat } from "../services/llm.js";
+import { streamChat, streamWithSystemPrompt } from "../services/llm.js";
+import { SYSTEM_PROMPT } from "../services/prompts.js";
 import { encrypt, decrypt } from "../services/encryption.js";
 
 const router = Router();
@@ -64,7 +66,7 @@ router.delete("/sessions/:id", async (req, res) => {
  * in the final `done` event so the client can continue the conversation.
  */
 router.post("/", async (req, res) => {
-  const { message, sessionId } = req.body;
+  const { message, sessionId, entryId } = req.body;
   if (!message) return res.status(400).json({ error: "message is required" });
 
   let session;
@@ -101,19 +103,31 @@ router.post("/", async (req, res) => {
     console.warn("[chat] failed to load history:", err.message);
   }
 
-  // RAG: embed the message and retrieve relevant diary chunks
+  // Context: use specific entry if entryId provided, otherwise RAG over all entries
   let context = "";
   let contextEntryIds = [];
-  try {
-    const queryVec = await generateEmbedding(message);
-    const chunks = await Embeddings.similaritySearch(req.user.id, queryVec, {
-      k: 5,
-      threshold: 0.3,
-    });
-    contextEntryIds = [...new Set(chunks.map((c) => c.entry_id))];
-    context = chunks.map((c) => decrypt(c.chunk_text_encrypted)).join("\n\n");
-  } catch (err) {
-    console.warn("[rag] vector search failed, proceeding without context:", err.message);
+  if (entryId) {
+    try {
+      const entry = await Entries.getById(entryId);
+      if (entry && entry.user_id === req.user.id) {
+        context = decrypt(entry.body_encrypted);
+        contextEntryIds = [entryId];
+      }
+    } catch (err) {
+      console.warn("[chat] failed to load entry context:", err.message);
+    }
+  } else {
+    try {
+      const queryVec = await generateEmbedding(message);
+      const chunks = await Embeddings.similaritySearch(req.user.id, queryVec, {
+        k: 5,
+        threshold: 0.3,
+      });
+      contextEntryIds = [...new Set(chunks.map((c) => c.entry_id))];
+      context = chunks.map((c) => decrypt(c.chunk_text_encrypted)).join("\n\n");
+    } catch (err) {
+      console.warn("[rag] vector search failed, proceeding without context:", err.message);
+    }
   }
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -121,9 +135,13 @@ router.post("/", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
 
   try {
-    const fullText = await streamChat(history, message, context, (delta) => {
-      res.write(`data: ${JSON.stringify({ delta })}\n\n`);
-    });
+    const onDelta = (delta) => res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+    const system = context
+      ? `${SYSTEM_PROMPT}\n\nDiary entry context:\n${context}`
+      : SYSTEM_PROMPT;
+    const fullText = entryId
+      ? await streamWithSystemPrompt(system, history, message, onDelta)
+      : await streamChat(history, message, context, onDelta);
 
     // Persist assistant response
     await ChatMessages.create({
