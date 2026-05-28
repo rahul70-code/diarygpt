@@ -41,7 +41,8 @@ router.get("/", async (req, res) => {
     const rows = await Entries.getAllByUser(req.user.id);
     res.json(rows.map(toResponse));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -63,7 +64,8 @@ router.get("/:id", async (req, res) => {
       } : null,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -112,7 +114,8 @@ router.post("/", async (req, res) => {
 
     res.status(201).json(toResponse(entry));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -135,9 +138,44 @@ router.patch("/:id", async (req, res) => {
     const rows = await Entries.updateById(req.params.id, updates);
     const updated = Array.isArray(rows) ? rows[0] : rows;
     if (!updated) return res.status(404).json({ error: "Entry not found" });
+
+    if (body !== undefined) {
+      const entryId = req.params.id;
+
+      Embeddings.deleteByEntry(entryId)
+        .then(() => generateEmbedding(body))
+        .then((vector) =>
+          Embeddings.create({
+            id: uuidv4(),
+            entry_id: entryId,
+            embedding: vector,
+            model_used: process.env.EMBEDDING_PROVIDER || "ollama",
+            chunk_text_encrypted: encrypt(body),
+            chunk_index: 0,
+          })
+        )
+        .catch((err) => console.error("[embed] re-embed failed for entry", entryId, err.message));
+
+      retryAnalyze(body, 3)
+        .then(async (analysis) => {
+          const payload = {
+            mood: analysis.mood,
+            themes: analysis.themes,
+            reflection_encrypted: encrypt(analysis.reflection || ""),
+            follow_up_question: analysis.followUpQuestion,
+          };
+          const existing = await Analysis.getByEntry(entryId);
+          return existing
+            ? Analysis.updateByEntry(entryId, payload)
+            : Analysis.create({ id: uuidv4(), entry_id: entryId, ...payload });
+        })
+        .catch((err) => console.error("[analyze] re-analyze failed for entry", entryId, err.message));
+    }
+
     res.json(toResponse(updated));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -153,7 +191,8 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ error: "Entry not found" });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 

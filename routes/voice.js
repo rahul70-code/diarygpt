@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { getConfig } from "../storage/configStore.js";
 
 const router = Router();
@@ -22,11 +22,10 @@ router.post("/transcribe", upload.single("audio"), async (req, res) => {
 
   try {
     const client = getClient();
-    const audioFile = new File(
-      [req.file.buffer],
-      `audio.${req.file.mimetype?.split("/")[1] || "webm"}`,
-      { type: req.file.mimetype || "audio/webm" }
-    );
+    const ext = req.file.mimetype?.split("/")[1] || "webm";
+    const audioFile = await toFile(req.file.buffer, `audio.${ext}`, {
+      type: req.file.mimetype || "audio/webm",
+    });
 
     const transcription = await client.audio.transcriptions.create({
       file: audioFile,
@@ -36,7 +35,8 @@ router.post("/transcribe", upload.single("audio"), async (req, res) => {
 
     res.json({ text: transcription.text });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -66,7 +66,8 @@ router.post("/speak", async (req, res) => {
     const buffer = Buffer.from(await mp3.arrayBuffer());
     res.send(buffer);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 

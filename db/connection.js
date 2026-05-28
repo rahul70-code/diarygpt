@@ -15,7 +15,6 @@ const pool = new Pool({
 
 pool.on("error", (err) => {
   console.error("Unexpected error on idle postgres client", err);
-  process.exit(-1);
 });
 
 export default pool;

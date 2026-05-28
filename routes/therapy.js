@@ -43,7 +43,8 @@ router.get("/sessions", async (req, res) => {
     const sessions = await TherapySessions.getAllByUser(req.user.id);
     res.json(sessions);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -62,7 +63,8 @@ router.get("/sessions/:id/messages", async (req, res) => {
       createdAt: m.created_at,
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -76,7 +78,8 @@ router.delete("/sessions/:id", async (req, res) => {
     await TherapySessions.deleteById(req.params.id);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -139,7 +142,8 @@ router.post("/session", async (req, res) => {
       content_encrypted: encrypt(message),
     });
   } catch (err) {
-    sseWrite(res, { error: err.message });
+    console.error(err);
+    sseWrite(res, { error: "Internal Server Error" });
     return res.end();
   }
 
@@ -169,7 +173,8 @@ router.post("/session", async (req, res) => {
 
     sseWrite(res, { done: true, text: fullText, sessionId: session.id });
   } catch (err) {
-    sseWrite(res, { error: err.message });
+    console.error(err);
+    sseWrite(res, { error: "Internal Server Error" });
   }
   res.end();
 });
@@ -189,7 +194,8 @@ router.post("/mood", async (req, res) => {
     });
     res.status(201).json({ id: log.id, score: log.score, loggedAt: log.logged_at });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -210,7 +216,8 @@ router.get("/mood/history", async (req, res) => {
         }))
     );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
