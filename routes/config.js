@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getConfig, setConfig, PROVIDER_MODELS, PROVIDER_PRIVACY } from "../storage/configStore.js";
+import { getConfig, setUserConfig, PROVIDER_MODELS, PROVIDER_PRIVACY } from "../storage/configStore.js";
 
 const router = Router();
 
@@ -20,7 +20,7 @@ router.get("/", (_req, res) => {
 
 // POST /api/config — switch provider/model or set a custom API key
 // Body: { provider?, model?, apiKey? }
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
   const { provider, model, apiKey } = req.body;
   if (!provider && !model && apiKey === undefined) {
     return res.status(400).json({ error: "Provide at least one of: provider, model, apiKey" });
@@ -29,10 +29,10 @@ router.post("/", (req, res) => {
   const updates = {};
   if (provider) updates.provider = provider;
   if (model)    updates.model    = model;
-  if (apiKey !== undefined) updates.apiKey = apiKey || null; // "" clears the key
+  if (apiKey !== undefined) updates.apiKey = apiKey || null;
 
   try {
-    const next = setConfig(updates);
+    const next = await setUserConfig(req.user.id, updates);
     res.json({
       provider:     next.provider,
       model:        next.model,

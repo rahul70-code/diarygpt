@@ -17,7 +17,8 @@ router.get("/sessions", async (req, res) => {
     const sessions = await ChatSessions.getAllByUser(req.user.id);
     res.json(sessions);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -38,7 +39,8 @@ router.get("/sessions/:id/messages", async (req, res) => {
       }))
     );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -52,7 +54,8 @@ router.delete("/sessions/:id", async (req, res) => {
     await ChatSessions.deleteById(req.params.id);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -88,7 +91,8 @@ router.post("/", async (req, res) => {
       content_encrypted: encrypt(message),
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 
   // Load conversation history from DB for LLM context
@@ -155,7 +159,8 @@ router.post("/", async (req, res) => {
     res.write(`data: ${JSON.stringify({ done: true, text: fullText, sessionId: session.id })}\n\n`);
     res.end();
   } catch (err) {
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    console.error(err);
+    res.write(`data: ${JSON.stringify({ error: "Internal Server Error" })}\n\n`);
     res.end();
   }
 });

@@ -25,23 +25,29 @@ router.post("/", async (req, res) => {
 
   if (chunks.length === 0) return res.json([]);
 
-  // Fetch the full entries for matched chunks (deduplicate by entry_id)
+  // Deduplicate chunks by entry_id, then batch-fetch entries in parallel
   const seen = new Set();
-  const results = [];
-  for (const chunk of chunks) {
-    if (seen.has(chunk.entry_id)) continue;
-    seen.add(chunk.entry_id);
-    const entry = await Entries.getById(chunk.entry_id);
-    if (entry) {
-      results.push({
+  const uniqueChunks = chunks.filter((c) => {
+    if (seen.has(c.entry_id)) return false;
+    seen.add(c.entry_id);
+    return true;
+  });
+
+  const entries = await Promise.all(uniqueChunks.map((c) => Entries.getById(c.entry_id)));
+
+  const results = uniqueChunks
+    .map((chunk, i) => {
+      const entry = entries[i];
+      if (!entry) return null;
+      return {
         id: entry.id,
         title: decrypt(entry.title_encrypted),
         body: decrypt(entry.body_encrypted),
         writtenAt: entry.written_at,
         score: chunk.score,
-      });
-    }
-  }
+      };
+    })
+    .filter(Boolean);
 
   res.json(results);
 });

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   email                TEXT UNIQUE NOT NULL,
   encryption_key_hash  TEXT NOT NULL,
   storage_mode         TEXT NOT NULL DEFAULT 'local'  CHECK (storage_mode IN ('local', 'cloud')),
-  embedding_provider   TEXT NOT NULL DEFAULT 'ollama' CHECK (embedding_provider IN ('ollama', 'openai', 'bedrock')),
+  embedding_provider   TEXT NOT NULL DEFAULT 'ollama' CHECK (embedding_provider IN ('ollama', 'openai', 'bedrock', 'jina', 'gemini')),
   created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

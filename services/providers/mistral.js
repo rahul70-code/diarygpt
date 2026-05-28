@@ -1,20 +1,21 @@
 // Mistral — quality analysis, therapy, and summaries
 import OpenAI from "openai";
+import { getConfig } from "../../storage/configStore.js";
 import { SYSTEM_PROMPT, ANALYZE_PROMPT } from "../prompts.js";
 
-const MODEL = "mistral-small-latest";
-
 function getClient() {
+  const { apiKey } = getConfig();
   return new OpenAI({
-    apiKey: process.env.MISTRAL_API_KEY,
+    apiKey: apiKey ?? process.env.MISTRAL_API_KEY,
     baseURL: "https://api.mistral.ai/v1",
   });
 }
 
 export async function analyzeEntry(text) {
+  const { model } = getConfig();
   const client = getClient();
   const response = await client.chat.completions.create({
-    model: MODEL,
+    model,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -25,9 +26,10 @@ export async function analyzeEntry(text) {
 }
 
 export async function generateText(systemPrompt, userMessage) {
+  const { model } = getConfig();
   const client = getClient();
   const response = await client.chat.completions.create({
-    model: MODEL,
+    model,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
@@ -37,9 +39,10 @@ export async function generateText(systemPrompt, userMessage) {
 }
 
 export async function streamWithSystemPrompt(systemPrompt, history, message, onDelta) {
+  const { model } = getConfig();
   const client = getClient();
   const stream = await client.chat.completions.create({
-    model: MODEL,
+    model,
     stream: true,
     messages: [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: message }],
   });
@@ -52,12 +55,13 @@ export async function streamWithSystemPrompt(systemPrompt, history, message, onD
 }
 
 export async function streamChat(history, message, context, onDelta) {
+  const { model } = getConfig();
   const client = getClient();
   const system = context
     ? `${SYSTEM_PROMPT}\n\nUser's recent diary context:\n${context}`
     : SYSTEM_PROMPT;
   const stream = await client.chat.completions.create({
-    model: MODEL,
+    model,
     stream: true,
     messages: [{ role: "system", content: system }, ...history, { role: "user", content: message }],
   });

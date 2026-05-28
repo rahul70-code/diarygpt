@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  /* Font Family Aliases */
+  --font-serif: var(--font-serif);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* Warm Editorial Aesthetic Colors */
+  --color-diary-cream: #FDFCF7;
+  --color-diary-sidebar: #FAF8F3;
+  --color-diary-border: #E6E1D8;
+  --color-diary-rust: #C2410C;
+  --color-diary-charcoal: #1C1917;
+  
+  /* Additional UI Helpers */
+  --color-diary-gray: #78716C;
+  --color-diary-green: #16A34A;
+  --color-diary-amber: #D97706;
+}
+
+:root {
+  --background: #FDFCF7;
+  --foreground: #1C1917;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+/* Custom Scrollbar styled for editorial style */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #FAF8F3;
+}
+::-webkit-scrollbar-thumb {
+  background: #E6E1D8;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #D5CFC4;
+}
+
+/* Custom transitions */
+.fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

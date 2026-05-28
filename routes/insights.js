@@ -51,7 +51,8 @@ router.get("/mood", async (req, res) => {
       memories,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -85,7 +86,8 @@ router.post("/weekly", async (req, res) => {
     const summary = await generateText(WEEKLY_SUMMARY_PROMPT, entriesText);
     res.json({ summary: summary.trim() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -107,7 +109,8 @@ router.get("/prompt", async (req, res) => {
     const prompt     = await generateText(JOURNALING_PROMPT_SYSTEM, recentText);
     res.json({ prompt: prompt.trim() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 

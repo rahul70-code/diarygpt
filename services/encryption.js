@@ -2,7 +2,6 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LEN = 12;   // 96-bit IV recommended for GCM
-const TAG_LEN = 16;  // 128-bit auth tag
 
 function getKey() {
   const raw = process.env.ENCRYPTION_KEY;
@@ -49,7 +48,6 @@ export function decrypt(value) {
     ]);
     return decrypted.toString("utf8");
   } catch {
-    // Auth tag mismatch or corrupted data — return as-is rather than crashing
-    return value;
+    return "[decryption error]";
   }
 }
